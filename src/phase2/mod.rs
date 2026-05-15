@@ -1,0 +1,396 @@
+//! cleanup data and convert to better structs for external crates
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+    ops::RangeInclusive,
+};
+
+use crate::{
+    Code,
+    cpu_mode::CpuMode,
+    phase1::{
+        branch_analysis::BranchAnalysis,
+        reg_analysis::{RegWriteTracker, RegisterState, Value},
+    },
+};
+
+pub(crate) mod fn_analysis;
+pub(crate) mod ref_fixup;
+
+#[derive(Debug)]
+pub struct Metadata {
+    /// binary base address
+    base_address: usize,
+    /// all disassembled instructions
+    pub bin: BTreeMap<usize, Code>,
+    /// all basic blocks
+    pub blocks: Vec<BasicBlock>,
+    /// all functions
+    pub fns: Vec<Function>,
+    /// all data references
+    pub refs: HashMap<usize, usize>,
+    /// branch data
+    branch: BranchAnalysis,
+}
+
+impl PartialEq for Metadata {
+    // there's only one metadata instance
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Metadata {}
+
+impl Metadata {
+    pub fn new(
+        base_address: usize,
+        bin: BTreeMap<usize, Code>,
+        blocks: Vec<BasicBlock>,
+        refs: HashMap<usize, usize>,
+        branch: BranchAnalysis,
+    ) -> Self {
+        Self {
+            base_address,
+            bin,
+            blocks,
+            fns: Vec::new(),
+            refs,
+            branch,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct BasicBlock {
+    /// code range for the `bin`
+    range: RangeInclusive<usize>,
+    /// block mode
+    mode: CpuMode,
+    /// previous blocks which jump to this one
+    predecessors: Vec<usize>,
+    /// next blocks after this one
+    successors: Vec<usize>,
+    /// state when the block is entered
+    state: RegWriteTracker,
+}
+
+impl PartialOrd for BasicBlock {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BasicBlock {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.start_va().cmp(&other.start_va())
+    }
+}
+
+impl BasicBlock {
+    pub(crate) fn new(
+        range: RangeInclusive<usize>,
+        mode: CpuMode,
+        predecessors: Vec<usize>,
+        successors: Vec<usize>,
+        state: RegWriteTracker,
+    ) -> Self {
+        Self {
+            range,
+            mode,
+            predecessors,
+            successors,
+            state,
+        }
+    }
+
+    /// is the `va` in the block?
+    fn contains_va(&self, va: usize) -> bool {
+        self.range.contains(&va)
+    }
+
+    /// block start VA
+    fn start_va(&self) -> usize {
+        *self.range.start()
+    }
+
+    /// block end VA
+    fn end_va(&self) -> usize {
+        *self.range.end()
+    }
+}
+
+/// read-only fat pointer to the `BasicBlock` with global metadata
+#[derive(Debug, PartialEq, Eq)]
+pub struct BasicBlockView<'a> {
+    /// global metadata
+    metadata: &'a Metadata,
+    /// block ref
+    block: &'a BasicBlock,
+}
+
+impl Display for BasicBlockView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Basic block @ {:#x}:", self.start_va())?;
+        writeln!(
+            f,
+            "Code range: from {:#x} to {:#x}",
+            self.start_va(),
+            self.end_va()
+        )?;
+        self.block
+            .predecessors
+            .iter()
+            .try_for_each(|va| writeln!(f, "Previous block VA: {va:#x}"))?;
+        self.block
+            .successors
+            .iter()
+            .try_for_each(|va| writeln!(f, "Next block VA: {va:#x}"))?;
+        write!(f, "CPU state: {}", self.regs())
+    }
+}
+
+impl PartialOrd for BasicBlockView<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BasicBlockView<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.start_va().cmp(&other.start_va())
+    }
+}
+
+impl<'a> BasicBlockView<'a> {
+    pub(crate) fn new(metadata: &'a Metadata, block: &'a BasicBlock) -> Self {
+        Self { metadata, block }
+    }
+
+    /// block code
+    pub fn code(&self) -> impl DoubleEndedIterator<Item = &'a Code> + use<'a> {
+        let bin = &self.metadata.bin;
+        let range = self.block.range.clone();
+
+        bin.range(range).map(|(_, code)| code)
+    }
+
+    /// is the `va` in the block?
+    pub fn contains_va(&self, va: usize) -> bool {
+        self.block.contains_va(va)
+    }
+
+    /// block start VA
+    pub fn start_va(&self) -> usize {
+        self.block.start_va()
+    }
+
+    /// block end VA
+    pub fn end_va(&self) -> usize {
+        self.block.end_va()
+    }
+
+    /// register state access
+    pub fn regs(&self) -> RegisterView<'a> {
+        RegisterView::new(self.metadata, &self.block.state)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Function {
+    /// block indexes
+    blocks: Vec<usize>,
+}
+
+impl Function {
+    pub(crate) fn new(blocks: Vec<usize>) -> Self {
+        Self { blocks }
+    }
+}
+
+/// read-only fat pointer to the `Function` with global metadata
+#[derive(Debug, PartialEq, Eq)]
+pub struct FunctionView<'a> {
+    /// global metadata
+    metadata: &'a Metadata,
+    /// fn ref
+    f: &'a Function,
+}
+
+impl Display for FunctionView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Function @ {:#x}", self.start_va())?;
+        write!(f, "Blocks: ")?;
+        let count = self.blocks().count();
+        self.blocks()
+            .enumerate()
+            .try_for_each(|(i, b)| -> std::fmt::Result {
+                write!(f, "{:#x}-{:#x}", b.start_va(), b.end_va())?;
+                if i != count - 1 {
+                    write!(f, ", ")
+                } else {
+                    Ok(())
+                }
+            })?;
+        writeln!(f)?;
+        write!(f, "Code size: {}", self.code().count())
+    }
+}
+
+impl<'a> FunctionView<'a> {
+    pub(crate) fn new(metadata: &'a Metadata, f: &'a Function) -> Self {
+        Self { metadata, f }
+    }
+
+    /// function basic blocks
+    pub fn blocks(&'a self) -> impl DoubleEndedIterator<Item = BasicBlockView<'a>> + use<'a> {
+        self.f
+            .blocks
+            .iter()
+            .map(|&i| BasicBlockView::new(self.metadata, &self.metadata.blocks[i]))
+    }
+
+    /// function code
+    pub fn code(&self) -> impl DoubleEndedIterator<Item = &'a Code> + use<'a> {
+        let metadata = self.metadata;
+
+        self.f.blocks.iter().flat_map(|&i| {
+            let block = &metadata.blocks[i];
+            metadata
+                .bin
+                .range(block.range.clone())
+                .map(|(_, code)| code)
+        })
+    }
+
+    /// is the `va` in the function?
+    pub fn contains_va(&self, va: usize) -> bool {
+        self.blocks().any(|b| b.contains_va(va))
+    }
+
+    /// function start VA
+    pub fn start_va(&self) -> usize {
+        self.blocks()
+            .next()
+            .expect("function can't have empty body")
+            .start_va()
+    }
+
+    /// register state access (first basic block)
+    pub fn regs(&'a self) -> RegisterView<'a> {
+        self.blocks()
+            .next()
+            .expect("function can't have empty body")
+            .regs()
+    }
+}
+
+/// read-only fat pointer to the `RegWriteTracker` with global metadata
+#[derive(Debug, PartialEq, Eq)]
+pub struct RegisterView<'a> {
+    /// global metadata
+    metadata: &'a Metadata,
+    /// rwt ref
+    rwt: &'a RegWriteTracker,
+}
+
+impl Display for RegisterView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (0..=15)
+            .map(|i| {
+                write!(f, "{}", self.rwt.get(i))?;
+                if i != 15 { write!(f, ", ") } else { Ok(()) }
+            })
+            .collect::<std::fmt::Result>()
+    }
+}
+
+impl<'a> RegisterView<'a> {
+    pub(crate) fn new(metadata: &'a Metadata, rwt: &'a RegWriteTracker) -> Self {
+        Self { metadata, rwt }
+    }
+
+    /// calculate register state **BEFORE** `va` would be executed
+    ///
+    /// `None` if `va` doesn't exist
+    pub fn state_at(&self, va: usize) -> Option<RegisterState> {
+        let block = self.metadata.blocks.iter().find(|b| b.contains_va(va))?;
+
+        // clone is fine because we don't want to mutate existing block
+        let mut rwt = block.state.clone();
+
+        // clone is very cheap here
+        for (v, code) in self.metadata.bin.range(block.range.clone()) {
+            if *v == va {
+                return Some(rwt.snapshot());
+            }
+
+            rwt.step(code, self.metadata.base_address);
+        }
+
+        None
+    }
+
+    /// calculate register state **AFTER** `va` is executed
+    ///
+    /// `None` if `va` doesn't exist
+    pub fn state_at_after(&self, va: usize) -> Option<RegisterState> {
+        let block = self.metadata.blocks.iter().find(|b| b.contains_va(va))?;
+
+        // clone is fine because we don't want to mutate existing block
+        let mut rwt = block.state.clone();
+
+        // clone is very cheap here
+        for (v, code) in self.metadata.bin.range(block.range.clone()) {
+            rwt.step(code, self.metadata.base_address);
+
+            if *v == va {
+                return Some(rwt.snapshot());
+            }
+        }
+
+        None
+    }
+
+    /// calculate register state for `r` register **BEFORE** `va` would be executed
+    ///
+    /// `None` if `va` doesn't exist
+    pub fn state_for_reg(&self, va: usize, r: u8) -> Option<Value> {
+        let block = self.metadata.blocks.iter().find(|b| b.contains_va(va))?;
+
+        // clone is fine because we don't want to mutate existing block
+        let mut rwt = block.state.clone();
+
+        // clone is very cheap here
+        for (v, code) in self.metadata.bin.range(block.range.clone()) {
+            if *v == va {
+                return Some(rwt.get(r));
+            }
+
+            rwt.step(code, self.metadata.base_address);
+        }
+
+        None
+    }
+
+    /// calculate register state for `r` register **AFTER** `va` is executed
+    ///
+    /// `None` if `va` doesn't exist
+    pub fn state_for_reg_after(&self, va: usize, r: u8) -> Option<Value> {
+        let block = self.metadata.blocks.iter().find(|b| b.contains_va(va))?;
+
+        // clone is fine because we don't want to mutate existing block
+        let mut rwt = block.state.clone();
+
+        // clone is very cheap here
+        for (v, code) in self.metadata.bin.range(block.range.clone()) {
+            rwt.step(code, self.metadata.base_address);
+
+            if *v == va {
+                return Some(rwt.get(r));
+            }
+        }
+
+        None
+    }
+}
