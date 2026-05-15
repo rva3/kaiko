@@ -1,0 +1,103 @@
+use std::collections::HashMap;
+
+use tracing::instrument;
+use yaxpeax_arm::armv7::Reg;
+
+#[derive(Debug)]
+pub enum JumpType {
+    /// BL/BLX with immediate
+    DirectCall(usize),
+    /// BLX with register
+    IndirectCall(Reg),
+    /// unconditional B
+    DirectJump(usize),
+    /// BX
+    IndirectJump(Reg),
+    /// conditional B/CBZ/CBNZ
+    Branch { target: usize, fallthrough: usize },
+}
+
+#[derive(Debug)]
+pub struct BranchAnalysis {
+    /// caller -> callee (even though it's not always call, but we're not going to use something like jumper and jumpee, right?)
+    pub jumps: HashMap<usize, JumpType>,
+}
+
+impl BranchAnalysis {
+    pub fn new() -> Self {
+        Self {
+            jumps: HashMap::new(),
+        }
+    }
+
+    /// mark `target` as function call with `me` as caller VA
+    #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target)), level = "trace")]
+    pub fn mark_as_direct_call(&mut self, me: usize, target: usize) {
+        self.jumps.insert(me, JumpType::DirectCall(target));
+    }
+
+    /// mark `target` as function call with `me` as caller VA
+    #[instrument(skip(self), fields(me = format_args!("{:#x}", me)), level = "trace")]
+    pub fn mark_as_indirect_call(&mut self, me: usize, reg: Reg) {
+        self.jumps.insert(me, JumpType::IndirectCall(reg));
+    }
+
+    /// mark `target` as direct jump with `me` as jump instruction VA
+    #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target)), level = "trace")]
+    pub fn mark_as_direct_jump(&mut self, me: usize, target: usize) {
+        self.jumps.insert(me, JumpType::DirectJump(target));
+    }
+
+    /// mark `target` as indirect jump with `me` as jump instruction VA
+    #[instrument(skip(self), fields(me = format_args!("{:#x}", me)), level = "trace")]
+    pub fn mark_as_indirect_jump(&mut self, me: usize, reg: Reg) {
+        self.jumps.insert(me, JumpType::IndirectJump(reg));
+    }
+
+    /// mark `target` as branch target arm with `me` as branch instruction VA
+    #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target), fallthrough = format_args!("{:#x}", fallthrough)), level = "trace")]
+    pub fn mark_as_branch(&mut self, me: usize, target: usize, fallthrough: usize) {
+        self.jumps.insert(
+            me,
+            JumpType::Branch {
+                target,
+                fallthrough,
+            },
+        );
+    }
+
+    /// is `va` a function?
+    ///
+    /// if it's a function, then at least one `JumpType::DirectCall` should point to it
+    #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
+    pub fn is_fn(&self, va: usize) -> bool {
+        self.jumps.values().any(|ty| match ty {
+            JumpType::DirectCall(v) => va == *v,
+            _ => false,
+        })
+    }
+
+    pub fn get_callee(&self, va: usize) -> Option<&JumpType> {
+        self.jumps.get(&va)
+    }
+
+    /// get all jumps to the `va`, either it's a branch or jump
+    #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
+    pub fn all_jumps_for(&self, va: usize) -> impl Iterator<Item = usize> {
+        self.jumps
+            .iter()
+            .filter_map(move |(caller_va, ty)| match ty {
+                JumpType::DirectJump(v) => Some([(va == *v).then_some(*caller_va), None]),
+                JumpType::Branch {
+                    target,
+                    fallthrough,
+                } => Some([
+                    (va == *target).then_some(*caller_va),
+                    (va == *fallthrough).then_some(*caller_va),
+                ]),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|va| va)
+    }
+}
