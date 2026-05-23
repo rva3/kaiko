@@ -12,10 +12,7 @@ use crate::{
         Metadata as P1Metadata, asm_analysis::AsmAnalysis, block_analysis::BlockAnalysis,
         indirect_analysis::IndirectAnalysis,
     },
-    phase2::{
-        BasicBlockView, FunctionView, Metadata as P2Metadata, fn_analysis::FnAnalysis,
-        ref_fixup::RefFixup,
-    },
+    phase2::{BasicBlockView, FunctionView, Metadata as P2Metadata, fn_analysis::FnAnalysis},
 };
 use yaxpeax_arm::armv7::Instruction;
 
@@ -128,7 +125,6 @@ impl Analyzer {
         debug!("phase 2: create functions and prepare final data");
         let mut metadata = metadata.into_2nd();
         FnAnalysis::create_functions(&mut metadata);
-        RefFixup::fix_refs(&mut metadata);
         debug!("phase 2: ok");
         info!(
             "analysis complete with {} functions ({} blocks, {} instructions)",

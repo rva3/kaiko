@@ -1,7 +1,7 @@
 use tracing::{debug, instrument, trace, warn};
 
 use yaxpeax_arch::LengthedInstruction;
-use yaxpeax_arm::armv7::{ConditionCode, Opcode, Operand};
+use yaxpeax_arm::armv7::{ConditionCode, Opcode, Operand, Reg};
 
 use crate::{
     Code,
@@ -19,11 +19,16 @@ type Result<T> = core::result::Result<T, Phase1Error>;
 pub struct AsmAnalysis {
     /// VA queue
     queue: Vec<(usize, CpuMode)>,
+    /// bad callers
+    bad: Vec<usize>,
 }
 
 impl AsmAnalysis {
     pub fn new() -> Self {
-        Self { queue: Vec::new() }
+        Self {
+            queue: Vec::new(),
+            bad: Vec::new(),
+        }
     }
 
     #[cfg(not(feature = "unchecked"))]
@@ -188,11 +193,35 @@ impl AsmAnalysis {
                     code
                 }
                 Err(e) => {
+                    // discard invalid instruction which caused jump to here
+                    let mut iter = metadata.branch.all_jumps_for(va);
+                    if let Some(caller_va) = iter.next() {
+                        self.bad.push(caller_va);
+
+                        if iter.next().is_some() {
+                            todo!("more than one invalid jump to {va:#x}?");
+                        }
+                    }
                     // this is debug because we don't track any literal pools or noreturns, so falling into garbage is possible
                     debug!("disassembler error at {va:#x}: {e:?}");
                     break;
                 }
             };
+
+            // stop on literals
+            if metadata.refs.iter().any(|(caller_va, literal_va)| {
+                let should_check = metadata
+                    .bin
+                    .get(caller_va)
+                    // trust ADD
+                    .map(|caller| caller.instruction.opcode != Opcode::ADD)
+                    .unwrap_or(true);
+                should_check && va == *literal_va
+            }) {
+                debug!("fell into literal at {va:#x}, abort");
+                break;
+            }
+
             trace!(
                 "new instuction: {code} ({:?} {:?})",
                 code.instruction.opcode, code.instruction.operands
@@ -303,10 +332,6 @@ impl AsmAnalysis {
                         };
 
                         if let Some(bytes) = metadata.data.get(load..load + 4) {
-                            let value = u32::from_le_bytes(bytes.try_into().unwrap()) as usize;
-                            metadata.refs.insert(code.va, value);
-                            trace!("add {value:#x} to data refs");
-
                             // jump
                             if rt.is_pc() && imm == { if mode == CpuMode::Arm { 4 } else { 0 } } {
                                 let reg_val =
@@ -325,6 +350,9 @@ impl AsmAnalysis {
                                 }
 
                                 stop = true;
+                            } else {
+                                metadata.refs.insert(code.va, load + metadata.base_address);
+                                trace!("add {load:#x} to data refs");
                             }
                         }
                     }
@@ -344,6 +372,48 @@ impl AsmAnalysis {
                     {
                         // MOV PC, LR is RET pseudo-instruction, non-LR values are just MOV PC, Rd
                         stop = true;
+                    }
+                }
+                Opcode::ADD => {
+                    // ADD Rn, PC is usually used in PIE binaries to fixup relative loads
+                    if let Operand::Reg(rn) = code.instruction.operands[0]
+                        && let Operand::Reg(r_should_be_pc) = code.instruction.operands[1]
+                        && r_should_be_pc.is_pc()
+                        // this is ADD Rn, PC, now look for LDR entry to fixup
+                        && let Some(ldr) = bin.iter().rev().find(|c| {
+                            if let Operand::Reg(r) = c.instruction.operands[0]
+                            && r == rn
+                            && let Operand::RegDerefPreindexOffset(r_should_be_pc, _, _, _) = c.instruction.operands[1] &&
+                            r_should_be_pc.is_pc() && c.instruction.opcode == Opcode::LDR {
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    {
+                        debug!(
+                            "fixed ref originally created at {:#x} at {:#x}",
+                            ldr.va, code.va
+                        );
+
+                        // literal pool address, already stored by LDR
+                        let ldr_pool_addr =
+                            *metadata.refs.get(&ldr.va).expect("LDR entry must exist");
+                        let ldr_pool_off = ldr_pool_addr - metadata.base_address;
+                        // literal pool **value**
+                        let ldr_va = i32::from_le_bytes(
+                            metadata.data[ldr_pool_off..ldr_pool_off + 4]
+                                .try_into()
+                                .unwrap(),
+                        ) as isize;
+
+                        debug!("LDR pool address: {ldr_pool_addr:#x}");
+                        debug!("LDR pool value: {ldr_va:#x}");
+                        let ldr_va = ldr_va.wrapping_add_unsigned(code.pc());
+
+                        // add new entry because data referenced by the LDR is a literal itself
+                        metadata.refs.insert(code.va, ldr_va as usize);
+                        debug!("ADD value: {ldr_va:#x}");
                     }
                 }
                 _ => (),
@@ -385,6 +455,21 @@ impl AsmAnalysis {
                 .bin
                 .extend(bin.into_iter().map(|code| (code.va, code)));
         }
+
+        // discard invalid jumps
+        self.bad.iter().for_each(|&va| {
+            if let Some(block) = metadata.blocks.iter_mut().find(|b| b.contains_va(va)) {
+                let end_va = *metadata
+                    .bin
+                    .range(..block.end_va() - 1)
+                    .next_back()
+                    .expect("invalid instruction at start")
+                    .0;
+                block.range = block.start_va()..=end_va;
+                metadata.bin.remove_entry(&va);
+                metadata.branch.discard(va);
+            }
+        });
 
         debug!("jump metadata len: {}", metadata.branch.jumps.len());
 

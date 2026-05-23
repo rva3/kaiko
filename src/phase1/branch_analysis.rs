@@ -100,4 +100,10 @@ impl BranchAnalysis {
             .flatten()
             .filter_map(|va| va)
     }
+
+    /// remove entry
+    #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
+    pub fn discard(&mut self, va: usize) {
+        self.jumps.remove_entry(&va);
+    }
 }
