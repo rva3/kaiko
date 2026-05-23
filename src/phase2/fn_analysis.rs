@@ -42,13 +42,16 @@ impl FnAnalysis {
                 fn_blocks.push(current_idx);
 
                 if let Some(current_block) = metadata.blocks.get(current_idx) {
-                    for &successor_idx in &current_block.successors {
+                    for &successor_va in &current_block.successors {
                         queue.push(
                             metadata
                                 .blocks
                                 .iter()
                                 .enumerate()
-                                .find_map(|(i, b)| (b.start_va() == successor_idx).then_some(i))
+                                .inspect(|(_, b)| {
+                                    trace!("check for {:#x} == {:#x}", b.start_va(), successor_va)
+                                })
+                                .find_map(|(i, b)| (b.start_va() == successor_va).then_some(i))
                                 .expect("block must exist since VA was added by the phase 1"),
                         );
                     }

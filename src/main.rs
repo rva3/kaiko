@@ -43,6 +43,7 @@ fn main() -> Result<(), Error> {
             while let Some(f) = iter.next() {
                 info!("{f}");
             }
+            info!("done");
         } else {
             error!("can't find string in the binary");
         }

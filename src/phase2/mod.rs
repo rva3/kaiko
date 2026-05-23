@@ -15,7 +15,6 @@ use crate::{
 };
 
 pub(crate) mod fn_analysis;
-pub(crate) mod ref_fixup;
 
 #[derive(Debug)]
 pub struct Metadata {
