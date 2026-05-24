@@ -9,8 +9,9 @@ use crate::{
     cpu_mode::CpuMode,
     err::Error,
     phase1::{
-        Metadata as P1Metadata, asm_analysis::AsmAnalysis, block_analysis::BlockAnalysis,
-        indirect_analysis::IndirectAnalysis, indirect_fn_analysis::IndirectFnAnalysis,
+        Metadata as P1Metadata, asm_analysis::AsmAnalysis, blind_analysis::BlindAnalysis,
+        block_analysis::BlockAnalysis, indirect_analysis::IndirectAnalysis,
+        indirect_fn_analysis::IndirectFnAnalysis,
     },
     phase2::{BasicBlockView, FunctionView, Metadata as P2Metadata, fn_analysis::FnAnalysis},
 };
@@ -95,6 +96,7 @@ impl Analyzer {
 
         analyzer.enqueue_va(&mut metadata, base_address + entry_offset, entry_mode);
 
+        let mut blind_scan_ran = false;
         loop {
             analyzer.process_queue(&mut metadata).unwrap();
 
@@ -108,7 +110,16 @@ impl Analyzer {
             let indirect_fns = IndirectFnAnalysis::fns(&metadata);
 
             if indirect.queue.is_empty() && jumps.is_empty() && indirect_fns.is_empty() {
-                break;
+                if !blind_scan_ran {
+                    for (va, mode) in BlindAnalysis::find_fns(&metadata) {
+                        analyzer.enqueue_va(&mut metadata, va, mode);
+                    }
+
+                    // allow only once
+                    blind_scan_ran = true;
+                } else {
+                    break;
+                }
             }
 
             for (va, mode) in jumps {
@@ -172,7 +183,7 @@ impl Analyzer {
 
     /// get functions which reference `s`
     pub fn fns_by_str(&self, s: &str) -> Option<impl Iterator<Item = FunctionView<'_>>> {
-        let data_va = dbg!(self.map_va(memmem::find(&self.data, s.as_bytes())?)?);
+        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)?;
         Some(
             self.metadata
                 .refs

@@ -168,10 +168,16 @@ impl AsmAnalysis {
         let mut bin: Vec<Code> = Vec::with_capacity(50);
         let mut va = start_va;
         let mut last_va = start_va;
+        let mut junk = 0;
 
         loop {
             if va != start_va && metadata.bin.contains_key(&va) {
                 debug!("{va:#x} already processed");
+                break;
+            }
+
+            if junk >= 50 {
+                warn!("too many junk from {start_va:#x} to {va:#x}, abort");
                 break;
             }
 
@@ -185,10 +191,30 @@ impl AsmAnalysis {
             if offset >= metadata.data.len() {
                 warn!("{va:#x} out of bounds, abort analysis for the {start_va:#x} entry");
                 metadata.branch.discard(va);
+
+                // also drop caller who queued this instruction
+                let mut iter = metadata.branch.all_for(va);
+                if let Some(va) = iter.next() {
+                    debug!("drop caller at {va:#x}");
+                    let die = iter.next().is_some();
+                    drop(iter);
+
+                    metadata.branch.discard(va);
+
+                    if die {
+                        todo!("more than one invalid caller for {va:#x}. the CFG is really broken");
+                    }
+                }
                 break;
             }
 
-            let code = match Self::disassemble_oneshot(&metadata.data[offset..], mode) {
+            let data = &metadata.data[offset..offset + 4];
+
+            if data.iter().all(|&i| i == 0 || i == 0xff) {
+                junk += 1;
+            }
+
+            let code = match Self::disassemble_oneshot(data, mode) {
                 Ok(mut code) => {
                     code.va = va;
                     code

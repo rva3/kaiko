@@ -101,6 +101,28 @@ impl BranchAnalysis {
             .filter_map(|va| va)
     }
 
+    /// get all jumps, branches and calls for the `va`
+    #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
+    pub fn all_for(&self, va: usize) -> impl Iterator<Item = usize> {
+        self.jumps
+            .iter()
+            .filter_map(move |(caller_va, ty)| match ty {
+                JumpType::DirectCall(v) | JumpType::DirectJump(v) => {
+                    Some([(va == *v).then_some(*caller_va), None])
+                }
+                JumpType::Branch {
+                    target,
+                    fallthrough,
+                } => Some([
+                    (va == *target).then_some(*caller_va),
+                    (va == *fallthrough).then_some(*caller_va),
+                ]),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|va| va)
+    }
+
     /// remove entry
     #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
     pub fn discard(&mut self, va: usize) {
