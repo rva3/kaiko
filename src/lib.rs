@@ -98,7 +98,7 @@ impl Analyzer {
 
         let mut blind_scan_ran = false;
         loop {
-            analyzer.process_queue(&mut metadata).unwrap();
+            analyzer.process_queue(&mut metadata)?;
 
             #[cfg(feature = "unchecked")]
             warn!("self-test is disabled");
