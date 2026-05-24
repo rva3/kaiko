@@ -39,8 +39,8 @@ fn main() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     if let Some(s) = cli.s {
-        if let Some(mut iter) = analyzer.fns_by_str(&s) {
-            while let Some(f) = iter.next() {
+        if let Some(fns) = analyzer.fns_by_str(&s) {
+            for f in fns {
                 info!("{f}");
             }
             info!("done");
