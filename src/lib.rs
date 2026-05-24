@@ -213,7 +213,7 @@ impl Analyzer {
 
     /// unmap `va` to raw offset
     ///
-    /// `None` if `va` cannot be unmapped (out of bounds of `[base_addr; base_addr + data.len()]`)
+    /// `None` if `va` cannot be unmapped (out of bounds of `[base_addr; base_addr + data.len())`)
     pub fn unmap_va(&self, va: usize) -> Option<usize> {
         if va >= self.base_address {
             if va < self.data.len() {
