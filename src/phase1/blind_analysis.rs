@@ -18,48 +18,49 @@ impl BlindAnalysis {
         let code_blacklist = &metadata.blocks;
         let literal_blacklist = metadata.refs.values().map(|va| *va).collect::<Vec<_>>();
 
+        let min_exec_va = metadata
+            .blocks
+            .iter()
+            .map(|b| b.start_va())
+            .min()
+            .unwrap_or(metadata.base_address);
+        let max_exec_va = metadata
+            .blocks
+            .iter()
+            .map(|b| b.end_va())
+            .max()
+            .unwrap_or(metadata.base_address + metadata.data.len());
+
+        debug!("allow range: {min_exec_va:#x}..={max_exec_va:#x}");
+
         let mut fns = Vec::new();
-        // range is aligned by 2 because some thumb functions are not aligned to 4
-        let mut va = metadata.base_address;
-        while va < metadata.base_address + metadata.data.len() {
+        let mut va = min_exec_va;
+
+        while va < max_exec_va {
             trace!("try {va:#x}");
 
             if let Some(block) = code_blacklist
                 .iter()
                 .find(|code_blacklist| code_blacklist.range.contains(&va))
             {
-                trace!(
-                    "existing code at {va:#x}, blacklisted by {:#x}..={:#x}",
-                    block.start_va(),
-                    block.end_va()
-                );
+                trace!("existing code at {va:#x}");
                 va += if block.mode == CpuMode::Arm { 4 } else { 2 };
                 continue;
             } else if literal_blacklist.contains(&va) {
-                let size = if let Some(referenced_by) = metadata
-                    .refs
-                    .iter()
-                    .find_map(|(&caller_va, &literal_va)| (literal_va == va).then_some(caller_va))
-                    && let Some(code) = metadata.bin.get(&referenced_by)
-                {
-                    code.instruction.len().to_const() as usize
-                } else {
-                    4 // safe
-                };
-                trace!("literal at {va:#x} with {size:#x} size");
-                va += size;
+                trace!("literal at {va:#x}");
+                va += 4;
                 continue;
             }
 
             let off = va - metadata.base_address;
             if off + 4 >= metadata.data.len() {
-                debug!("end");
+                trace!("out of bounds, stop");
                 break;
             }
 
             let data = &metadata.data[off..off + 4];
             if data.iter().all(|&i| i == 0 || i == 0xff) {
-                debug!("likely a junk");
+                trace!("likely junk at {va:#x}");
                 va += 4;
                 continue;
             }
@@ -76,13 +77,15 @@ impl BlindAnalysis {
                 },
             };
 
-            if Self::strict_prologue(&code) && Self::dry_run(metadata, va, mode) {
+            if Self::strict_prologue(&code)
+                && Self::dry_run(metadata, va, mode, min_exec_va, max_exec_va)
+            {
                 trace!("maybe fn at {va:#x}");
                 fns.push((va, mode));
                 va += code.instruction.len().to_const() as usize;
             } else {
-                trace!("not a fn at {va:#x}");
-                va += 2; // might be invalid opcode
+                trace!("not fn at {va:#x}");
+                va += 2;
             }
         }
 
@@ -114,15 +117,23 @@ impl BlindAnalysis {
     }
 
     /// test if it's actual fn
-    fn dry_run(metadata: &Metadata, start_va: usize, mode: CpuMode) -> bool {
+    pub fn dry_run(
+        metadata: &Metadata,
+        start_va: usize,
+        mode: CpuMode,
+        min: usize,
+        max: usize,
+    ) -> bool {
         let mut va = start_va;
         let mut decoded = 0;
         const MAX_DEPTH: usize = 15;
 
         while decoded < MAX_DEPTH {
+            trace!("dry run {va:#x}");
             let offset = va.wrapping_sub(metadata.base_address);
 
-            if offset + 4 > metadata.data.len() {
+            if offset + 4 > metadata.data.len() || va > max || va < min {
+                trace!("out of bounds, stop");
                 return false;
             }
 
@@ -141,6 +152,7 @@ impl BlindAnalysis {
                     Opcode::POP => {
                         if let Operand::RegList(list) = code.instruction.operands[0] {
                             if list.has_pc() {
+                                trace!("hit POP {{PC}}, stop");
                                 return true;
                             }
                         }
@@ -148,11 +160,12 @@ impl BlindAnalysis {
                     Opcode::BX => {
                         if let Operand::Reg(r) = code.instruction.operands[0] {
                             if r.is_lr() {
+                                trace!("hit BX LR, stop");
                                 return true;
                             }
                         }
                     }
-                    Opcode::B => {
+                    Opcode::B | Opcode::BL | Opcode::BLX => {
                         if let Operand::BranchOffset(imm) | Operand::BranchThumbOffset(imm) =
                             code.instruction.operands[0]
                         {
@@ -161,20 +174,23 @@ impl BlindAnalysis {
                             if target < metadata.base_address
                                 || target >= metadata.base_address + metadata.data.len()
                             {
+                                trace!("hit junk branch/call, stop");
                                 return false; // junk
                             }
                         }
                     }
-                    _ => {}
+                    _ => (),
                 }
 
                 va += code.instruction.len().to_const() as usize;
                 decoded += 1;
             } else {
+                trace!("failed to decode ({va:#x}), stop");
                 return false;
             }
         }
 
+        trace!("ok");
         // likely a fn
         true
     }

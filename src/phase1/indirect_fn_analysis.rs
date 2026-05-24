@@ -6,9 +6,10 @@ use crate::{
     cpu_mode::CpuMode,
     phase1::{
         Metadata,
+        blind_analysis::BlindAnalysis,
         disasm::{disassemble_arm_oneshot, disassemble_thumb_oneshot},
     },
-    regext::RegExt,
+    regext::{RegExt, RegListExt},
 };
 
 pub struct IndirectFnAnalysis;
@@ -65,16 +66,20 @@ impl IndirectFnAnalysis {
     /// prologue junk filter
     fn maybe_prologue(code: &Code) -> bool {
         match code.instruction.opcode {
-            // sometimes there's PUSH without LR
-            Opcode::PUSH => true,
-            // pretty common too
+            Opcode::PUSH => {
+                if let Operand::Reg(r) = code.instruction.operands[0] {
+                    r.is_lr()
+                } else if let Operand::RegList(r) = code.instruction.operands[1] {
+                    r.has_lr()
+                } else {
+                    false
+                }
+            }
             Opcode::MOV => true,
             // stack frame
             Opcode::SUB => {
-                if let Operand::Reg(r_should_be_sp) = code.instruction.operands[0]
-                    && r_should_be_sp.is_sp()
-                {
-                    true
+                if let Operand::Reg(r_should_be_sp) = code.instruction.operands[0] {
+                    r_should_be_sp.is_sp()
                 } else {
                     false
                 }
