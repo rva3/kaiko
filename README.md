@@ -43,6 +43,14 @@ getting much more reliable output.
 
 `cargo add --git https://github.com/rva3/kaiko` for lib
 
+## FAQ
+- \>too many logs
+- enable `no_tracers` feature.
+- \>bad code quality
+- i haven't seen ARM analysis with a good code yet.
+- \>there's invalid instruction at the end of the function
+- DCE and noreturn analysis are somewhere at the end of TODO.
+
 ## license
 [AGPLv3](./LICENSE)
 
