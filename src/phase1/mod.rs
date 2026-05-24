@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub(crate) mod asm_analysis;
+pub(crate) mod blind_analysis;
 pub(crate) mod block_analysis;
 pub(crate) mod branch_analysis;
 mod disasm;

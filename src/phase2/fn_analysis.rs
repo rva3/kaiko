@@ -48,9 +48,6 @@ impl FnAnalysis {
                                 .blocks
                                 .iter()
                                 .enumerate()
-                                .inspect(|(_, b)| {
-                                    trace!("check for {:#x} == {:#x}", b.start_va(), successor_va)
-                                })
                                 .find_map(|(i, b)| (b.start_va() == successor_va).then_some(i))
                                 .expect("block must exist since VA was added by the phase 1"),
                         );
