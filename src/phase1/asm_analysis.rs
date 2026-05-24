@@ -168,16 +168,10 @@ impl AsmAnalysis {
         let mut bin: Vec<Code> = Vec::with_capacity(50);
         let mut va = start_va;
         let mut last_va = start_va;
-        let mut junk = 0;
 
         loop {
             if va != start_va && metadata.bin.contains_key(&va) {
                 debug!("{va:#x} already processed");
-                break;
-            }
-
-            if junk >= 50 {
-                warn!("too many junk from {start_va:#x} to {va:#x}, abort");
                 break;
             }
 
@@ -209,10 +203,6 @@ impl AsmAnalysis {
             }
 
             let data = &metadata.data[offset..offset + 4];
-
-            if data.iter().all(|&i| i == 0 || i == 0xff) {
-                junk += 1;
-            }
 
             let code = match Self::disassemble_oneshot(data, mode) {
                 Ok(mut code) => {
