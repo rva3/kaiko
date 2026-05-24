@@ -450,7 +450,7 @@ dependencies = [
 [[package]]
 name = "yaxpeax-arm"
 version = "0.4.0"
-source = "git+https://github.com/rva3/yaxpeax-arm?branch=stable-dnm#8d9dce807371adbe6843fb183f833ecad78c0f35"
+source = "git+https://github.com/rva3/yaxpeax-arm?branch=stable-dnm#6a8ffa70d80cef8b23b16c5f65cd797bd02e13d3"
 dependencies = [
  "bitvec",
  "serde",
