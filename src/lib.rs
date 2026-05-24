@@ -194,19 +194,18 @@ impl Analyzer {
         )
     }
 
+    /// like `fns_by_str` but only for the first function
+    pub fn fn_by_str(&self, s: &str) -> Option<FunctionView<'_>> {
+        self.fns_by_str(s).map(|mut iter| iter.next()).flatten()
+    }
+
     /// map raw `offset` to VA
     ///
     /// `None` if `offset` cannot be mapped (bigger than max binary size)
     pub fn map_va(&self, offset: usize) -> Option<usize> {
-        if offset < self.base_address {
-            if offset < self.data.len() {
-                Some(self.base_address + offset)
-            } else {
-                warn!("failed to map {offset:#x}: bigger than binary range");
-                None
-            }
+        if offset < self.base_address && offset < self.data.len() {
+            Some(self.base_address + offset)
         } else {
-            warn!("failed to map {offset:#x}: bigger than base address");
             None
         }
     }
@@ -215,15 +214,9 @@ impl Analyzer {
     ///
     /// `None` if `va` cannot be unmapped (out of bounds of `[base_addr; base_addr + data.len())`)
     pub fn unmap_va(&self, va: usize) -> Option<usize> {
-        if va >= self.base_address {
-            if va < self.data.len() {
-                Some(va - self.base_address)
-            } else {
-                warn!("failed to unmap {va:#x}: bigger than binary range");
-                None
-            }
+        if va >= self.base_address && va < self.data.len() {
+            Some(va - self.base_address)
         } else {
-            warn!("failed to unmap {va:#x}: less than base address");
             None
         }
     }
