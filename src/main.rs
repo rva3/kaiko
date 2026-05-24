@@ -24,7 +24,7 @@ struct Cli {
     offset: Option<usize>,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), String> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .with_target(false)
@@ -32,11 +32,11 @@ fn main() -> Result<(), Error> {
         .init();
 
     let cli = Cli::parse();
-    let data = fs::read(cli.input).unwrap();
+    let data = fs::read(cli.input).map_err(|e| e.to_string())?;
 
     info!("start analysis");
-    let analyzer =
-        Analyzer::try_new(data, cli.base, cli.offset.unwrap_or(0), CpuMode::Arm).unwrap();
+    let analyzer = Analyzer::try_new(data, cli.base, cli.offset.unwrap_or(0), CpuMode::Arm)
+        .map_err(|e| e.to_string())?;
 
     if let Some(s) = cli.s {
         if let Some(mut iter) = analyzer.fns_by_str(&s) {

@@ -10,7 +10,7 @@ use crate::{
     err::Error,
     phase1::{
         Metadata as P1Metadata, asm_analysis::AsmAnalysis, block_analysis::BlockAnalysis,
-        indirect_analysis::IndirectAnalysis,
+        indirect_analysis::IndirectAnalysis, indirect_fn_analysis::IndirectFnAnalysis,
     },
     phase2::{BasicBlockView, FunctionView, Metadata as P2Metadata, fn_analysis::FnAnalysis},
 };
@@ -105,12 +105,17 @@ impl Analyzer {
                 .self_test(&metadata)
                 .inspect(|_| debug!("phase 1: self-test passed"))?;
             let jumps = indirect.resolve_register_state(&mut metadata);
+            let indirect_fns = IndirectFnAnalysis::fns(&metadata);
 
-            if indirect.queue.is_empty() && jumps.is_empty() {
+            if indirect.queue.is_empty() && jumps.is_empty() && indirect_fns.is_empty() {
                 break;
             }
 
             for (va, mode) in jumps {
+                analyzer.enqueue_va(&mut metadata, va, mode);
+            }
+
+            for (va, mode) in indirect_fns {
                 analyzer.enqueue_va(&mut metadata, va, mode);
             }
         }
