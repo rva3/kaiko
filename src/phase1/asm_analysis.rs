@@ -184,6 +184,7 @@ impl AsmAnalysis {
             let offset = va.wrapping_sub(metadata.base_address);
             if offset >= metadata.data.len() {
                 warn!("{va:#x} out of bounds, abort analysis for the {start_va:#x} entry");
+                metadata.branch.discard(va);
                 break;
             }
 
@@ -209,16 +210,8 @@ impl AsmAnalysis {
             };
 
             // stop on literals
-            if metadata.refs.iter().any(|(caller_va, literal_va)| {
-                let should_check = metadata
-                    .bin
-                    .get(caller_va)
-                    // trust ADD
-                    .map(|caller| caller.instruction.opcode != Opcode::ADD)
-                    .unwrap_or(true);
-                should_check && va == *literal_va
-            }) {
-                debug!("fell into literal at {va:#x}, abort");
+            if va != start_va && metadata.refs.values().any(|&literal_va| va == literal_va) {
+                debug!("fell into literal pool/data ref at {va:#x}, aborting linear execution");
                 break;
             }
 

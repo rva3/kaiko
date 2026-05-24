@@ -17,6 +17,7 @@ pub(crate) mod block_analysis;
 pub(crate) mod branch_analysis;
 mod disasm;
 pub(crate) mod indirect_analysis;
+pub(crate) mod indirect_fn_analysis;
 pub(crate) mod reg_analysis;
 
 /// phase 1 metadata for disassembling instructions

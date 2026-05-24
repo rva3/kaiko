@@ -1,6 +1,7 @@
 use yaxpeax_arm::armv7::Reg;
 
 pub trait RegExt {
+    fn is_sp(&self) -> bool;
     fn is_lr(&self) -> bool;
     fn is_pc(&self) -> bool;
 }
@@ -11,6 +12,10 @@ pub trait RegListExt {
 }
 
 impl RegExt for Reg {
+    fn is_sp(&self) -> bool {
+        self.number() == 14
+    }
+
     fn is_lr(&self) -> bool {
         self.number() == 14
     }

@@ -79,6 +79,7 @@ impl IndirectAnalysis {
             }
 
             if state_changed {
+                trace!("state changed");
                 // set new state to all successor blocks
                 let end_va = *range.end();
                 let mut successor_vas = Vec::new();
@@ -94,24 +95,6 @@ impl IndirectAnalysis {
                             successor_vas.push(*fallthrough);
                         }
                         _ => (),
-                    }
-                }
-
-                // oh no. i hate this part.
-                let ends_with_jump = matches!(
-                    metadata.branch.get_callee(end_va),
-                    Some(
-                        JumpType::DirectJump(_)
-                            | JumpType::Branch { .. }
-                            | JumpType::IndirectJump(_)
-                    )
-                );
-
-                if !ends_with_jump {
-                    if let Some((&next_va, _)) = metadata.bin.range(end_va + 1..).next() {
-                        if metadata.blocks.iter().any(|b| b.start_va() == next_va) {
-                            successor_vas.push(next_va);
-                        }
                     }
                 }
 
