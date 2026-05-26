@@ -181,6 +181,11 @@ impl Analyzer {
         self.functions().find(|f| f.contains_va(va))
     }
 
+    /// get basic block which has `va`
+    pub fn block_by_va(&self, va: usize) -> Option<BasicBlockView<'_>> {
+        self.blocks().find(|b| b.contains_va(va))
+    }
+
     /// get functions which reference `s`
     pub fn fns_by_str(&self, s: &str) -> Option<impl Iterator<Item = FunctionView<'_>>> {
         let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)?;
@@ -194,9 +199,34 @@ impl Analyzer {
         )
     }
 
+    /// get blocks which reference `s`
+    pub fn blocks_by_str(&self, s: &str) -> Option<impl Iterator<Item = BasicBlockView<'_>>> {
+        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)?;
+        Some(
+            self.metadata
+                .refs
+                .iter()
+                .filter(move |(_, known_data_va)| data_va == **known_data_va)
+                .map(|(&code_va, _)| self.block_by_va(code_va))
+                .filter_map(|f| f),
+        )
+    }
+
     /// like `fns_by_str` but only for the first function
     pub fn fn_by_str(&self, s: &str) -> Option<FunctionView<'_>> {
         self.fns_by_str(s).map(|mut iter| iter.next()).flatten()
+    }
+
+    /// like `blocks_by_str` but only for the first block
+    pub fn block_by_str(&self, s: &str) -> Option<BasicBlockView<'_>> {
+        self.blocks_by_str(s).map(|mut iter| iter.next()).flatten()
+    }
+
+    /// get function by the basic block
+    pub fn fn_by_block(&self, block: &BasicBlockView<'_>) -> FunctionView<'_> {
+        self.functions()
+            .find(|f| f.blocks().any(|b| b.start_va() == block.start_va()))
+            .expect("block must have assigned fn")
     }
 
     /// map raw `offset` to VA
