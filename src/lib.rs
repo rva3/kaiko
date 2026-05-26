@@ -208,7 +208,20 @@ impl Analyzer {
                 .iter()
                 .filter(move |(_, known_data_va)| data_va == **known_data_va)
                 .map(|(&code_va, _)| self.block_by_va(code_va))
-                .filter_map(|f| f),
+                .filter_map(|b| b),
+        )
+    }
+
+    /// get instructions which reference `s`
+    pub fn instructions_by_str(&self, s: &str) -> Option<impl Iterator<Item = &Code>> {
+        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)?;
+        Some(
+            self.metadata
+                .refs
+                .iter()
+                .filter(move |(_, known_data_va)| data_va == **known_data_va)
+                .map(|(code_va, _)| self.metadata.bin.get(code_va))
+                .filter_map(|c| c),
         )
     }
 
@@ -220,6 +233,13 @@ impl Analyzer {
     /// like `blocks_by_str` but only for the first block
     pub fn block_by_str(&self, s: &str) -> Option<BasicBlockView<'_>> {
         self.blocks_by_str(s).map(|mut iter| iter.next()).flatten()
+    }
+
+    /// like `instruction_by_str` but only for the first instruction
+    pub fn instruction_by_str(&self, s: &str) -> Option<&Code> {
+        self.instructions_by_str(s)
+            .map(|mut iter| iter.next())
+            .flatten()
     }
 
     /// get function by the basic block
