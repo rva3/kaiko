@@ -16,8 +16,6 @@ pub enum Value {
     Unknown,
     /// Constant
     Immediate(u32),
-    /// Literal pool load at `base` with `offset`
-    Load { base: u32, offset: i32 },
     /// Value from `base` with `offset` without derefencing
     RegisterOffset { r: Reg, offset: i32 },
     /// Dereference from `r` with `offset`
@@ -30,9 +28,6 @@ impl Display for Value {
             Value::Uninitialized => write!(f, "Uninitialized"),
             Value::Unknown => write!(f, "Unknown"),
             Value::Immediate(imm) => write!(f, "Immediate ({:#x})", imm),
-            Value::Load { base, offset } => {
-                write!(f, "Load from {base:#x} with {offset:#x} offset")
-            }
             Value::RegisterOffset { r, offset } => {
                 write!(f, "Offset from r{} with {offset:#x}", r.number())
             }
@@ -75,13 +70,6 @@ impl RegWriteTracker {
         self.regs[reg as usize] = Value::Immediate(value);
     }
 
-    pub fn load(&mut self, reg: u8, value: u32) {
-        self.regs[reg as usize] = Value::Load {
-            base: value,
-            offset: 0,
-        };
-    }
-
     pub fn register_offset(&mut self, reg: u8, r: Reg, offset: i32) {
         self.regs[reg as usize] = Value::RegisterOffset { r, offset }
     }
@@ -110,17 +98,6 @@ impl RegWriteTracker {
                 }
             }
             Value::Immediate(imm) => Some(imm),
-            Value::Load { base, offset } => {
-                let load = (base as usize).checked_sub(base_address)?;
-                let end = load + 4;
-
-                if data.len() < end {
-                    None
-                } else {
-                    let val = u32::from_le_bytes(data[load..end].try_into().unwrap());
-                    Some(val.wrapping_add_signed(offset))
-                }
-            }
             Value::RegisterOffset { r, offset } => {
                 if r == reg {
                     None
@@ -164,8 +141,8 @@ impl RegWriteTracker {
         changed
     }
 
-    pub fn step(&mut self, code: &Code, base_address: usize) {
-        self.immediate(15, (base_address + code.pc()) as u32);
+    pub fn step(&mut self, code: &Code, data: &[u8], base_address: usize) {
+        self.immediate(15, code.pc() as u32);
 
         trace!("register analysis: step in {code}");
         match code.instruction.opcode {
@@ -204,12 +181,21 @@ impl RegWriteTracker {
                     let offset = if up { imm as i32 } else { -(imm as i32) };
                     if reg.is_pc() {
                         let abs_pc = code.pc() & !3;
-                        let abs_addr = abs_pc.wrapping_add_signed(offset as isize);
+                        let abs_addr = abs_pc
+                            .wrapping_sub(base_address)
+                            .wrapping_add_signed(offset as isize);
                         trace!(
                             "LDR: literal load at {code} for {abs_addr:#x} to {}",
                             rt.number()
                         );
-                        self.load(rt.number(), abs_addr as u32);
+                        if let Some(bytes) = data.get(abs_addr..abs_addr + 4) {
+                            self.immediate(
+                                rt.number(),
+                                u32::from_le_bytes(bytes.try_into().unwrap()),
+                            )
+                        } else {
+                            self.regs[rt.number() as usize] = Value::Unknown;
+                        }
                     } else {
                         trace!(
                             "LDR: deref of {} at {offset:#x} to {}",
@@ -223,31 +209,23 @@ impl RegWriteTracker {
             Opcode::ADD | Opcode::SUB => {
                 if let Operand::Reg(rd) = code.instruction.operands[0]
                     && let Operand::Reg(rn) = code.instruction.operands[1]
-                    && let Operand::Imm32(imm) = code.instruction.operands[2]
                 {
+                    let imm = if let Operand::Imm32(imm) = code.instruction.operands[2] {
+                        imm
+                    } else {
+                        0
+                    };
                     let offset = if code.instruction.opcode == Opcode::ADD {
                         imm as i32
                     } else {
                         -(imm as i32)
                     };
 
-                    let new_value = match self.get(rn.number()) {
-                        Value::Immediate(val) => Value::Immediate(val.wrapping_add_signed(offset)),
-                        Value::Load {
-                            base,
-                            offset: existing_offset,
-                        } => Value::Load {
-                            base,
-                            offset: existing_offset + offset,
-                        },
-                        Value::RegisterOffset {
-                            r,
-                            offset: existing_offset,
-                        } => Value::RegisterOffset {
-                            r,
-                            offset: existing_offset + offset,
-                        },
-                        _ => Value::RegisterOffset { r: rn, offset },
+                    let new_value = match (self.get(rd.number()), self.get(rn.number())) {
+                        (Value::Immediate(v1), Value::Immediate(v2)) => {
+                            Value::Immediate((v1 + v2).wrapping_add_signed(offset))
+                        }
+                        _ => Value::Unknown,
                     };
 
                     self.regs[rd.number() as usize] = new_value;

@@ -35,7 +35,7 @@ fn main() -> Result<(), String> {
     let data = fs::read(cli.input).map_err(|e| e.to_string())?;
 
     info!("start analysis");
-    let analyzer = Analyzer::try_new(data, cli.base, cli.offset.unwrap_or(0), CpuMode::Arm)
+    let analyzer = Analyzer::try_new(&data, cli.base, cli.offset.unwrap_or(0), CpuMode::Arm)
         .map_err(|e| e.to_string())?;
 
     if let Some(s) = cli.s {

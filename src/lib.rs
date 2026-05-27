@@ -76,15 +76,15 @@ impl Display for Code {
     }
 }
 
-pub struct Analyzer {
-    data: Vec<u8>,
+pub struct Analyzer<'a> {
+    data: &'a [u8],
     base_address: usize,
-    metadata: P2Metadata,
+    metadata: P2Metadata<'a>,
 }
 
-impl Analyzer {
+impl<'a> Analyzer<'a> {
     pub fn try_new(
-        data: Vec<u8>,
+        data: &'a [u8],
         base_address: usize,
         entry_offset: usize,
         entry_mode: CpuMode,
