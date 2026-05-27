@@ -156,6 +156,26 @@ impl Analyzer {
         })
     }
 
+    /// read a raw byte slice from a VA
+    pub fn read_bytes(&self, va: usize, len: usize) -> Option<&[u8]> {
+        let offset = self.unmap_va(va)?;
+        self.data.get(offset..offset + len)
+    }
+
+    /// read LE u32
+    pub fn read_u32(&self, va: usize) -> Option<u32> {
+        let bytes = self.read_bytes(va, 4)?;
+        Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    /// read a null-terminated C string
+    pub fn read_cstr(&self, va: usize) -> Option<&str> {
+        let offset = self.unmap_va(va)?;
+        let slice = &self.data[offset..];
+        let null_idx = memchr::memchr(0, slice)?;
+        std::str::from_utf8(&slice[..null_idx]).ok()
+    }
+
     /// all instructions
     pub fn code(&self) -> impl Iterator<Item = &Code> {
         self.functions().map(|f| f.code()).flatten()
