@@ -193,6 +193,21 @@ impl<'a> BasicBlockView<'a> {
     pub fn regs(&self) -> RegisterView<'a> {
         RegisterView::new(self.metadata, &self.block.state)
     }
+
+    /// get all instructions matching an opcode
+    pub fn instructions_by_opcode(
+        &self,
+        opcode: yaxpeax_arm::armv7::Opcode,
+    ) -> impl DoubleEndedIterator<Item = &Code> {
+        self.code().filter(move |c| {
+            core::mem::discriminant(&c.instruction().opcode) == core::mem::discriminant(&opcode)
+        })
+    }
+
+    /// like `instructions_by_opcode` but only for the first opcode
+    pub fn instruction_by_opcode(&self, opcode: yaxpeax_arm::armv7::Opcode) -> Option<&Code> {
+        self.instructions_by_opcode(opcode).next()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
