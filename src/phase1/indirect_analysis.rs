@@ -41,7 +41,7 @@ impl IndirectAnalysis {
             for (va, code) in metadata.bin.range(range.clone()) {
                 trace!("at {code}");
 
-                rwt.step(code, metadata.base_address);
+                rwt.step(code, metadata.data, metadata.base_address);
 
                 match metadata.branch.get_callee(*va) {
                     Some(JumpType::IndirectCall(r) | JumpType::IndirectJump(r)) => {

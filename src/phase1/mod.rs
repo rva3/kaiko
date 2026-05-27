@@ -75,7 +75,7 @@ impl<'a> Metadata<'a> {
         }
     }
 
-    pub fn into_2nd(self) -> P2Metadata {
+    pub fn into_2nd(self) -> P2Metadata<'a> {
         let mut blocks = self
             .blocks
             .into_iter()
@@ -84,7 +84,14 @@ impl<'a> Metadata<'a> {
             })
             .collect::<Vec<_>>();
         blocks.sort_unstable();
-        P2Metadata::new(self.base_address, self.bin, blocks, self.refs, self.branch)
+        P2Metadata::new(
+            self.data,
+            self.base_address,
+            self.bin,
+            blocks,
+            self.refs,
+            self.branch,
+        )
     }
 }
 
