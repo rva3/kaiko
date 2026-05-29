@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 use clap::Parser;
 use clap_num::maybe_hex;
-use kaiko::{Analyzer, cpu_mode::CpuMode, err::Error};
+use kaiko::{Analyzer, cpu_mode::CpuMode};
 use tracing::{error, info};
 
 #[derive(Parser)]

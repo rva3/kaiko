@@ -6,7 +6,6 @@ use crate::{
     cpu_mode::CpuMode,
     phase1::{
         Metadata,
-        blind_analysis::BlindAnalysis,
         disasm::{disassemble_arm_oneshot, disassemble_thumb_oneshot},
     },
     regext::{RegExt, RegListExt},
