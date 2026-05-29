@@ -19,6 +19,7 @@ use yaxpeax_arm::armv7::Instruction;
 
 pub mod cpu_mode;
 pub mod err;
+mod ext;
 pub(crate) mod phase1;
 pub(crate) mod phase2;
 pub mod regext;
