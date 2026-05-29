@@ -52,7 +52,7 @@ pub fn a32_ldr_data(data: &[u8], op: Opcode) -> Option<u32> {
             if op.is_signed_load() {
                 Some((v as i32) as u32)
             } else {
-                Some(v as u32)
+                Some(v)
             }
         }
         8 => todo!(),

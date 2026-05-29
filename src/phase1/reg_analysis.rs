@@ -27,7 +27,7 @@ impl Display for Value {
         match self {
             Value::Uninitialized => write!(f, "Uninitialized"),
             Value::Unknown => write!(f, "Unknown"),
-            Value::Immediate(imm) => write!(f, "Immediate ({:#x})", imm),
+            Value::Immediate(imm) => write!(f, "Immediate ({imm:#x})"),
             Value::RegisterOffset { r, offset } => {
                 write!(f, "Offset from r{} with {offset:#x}", r.number())
             }
@@ -188,7 +188,7 @@ impl RegWriteTracker {
                         if let Some(val) =
                             a32_ldr_data(&data[bin_offset as usize..], code.instruction.opcode)
                         {
-                            self.immediate(rt.number(), val as u32)
+                            self.immediate(rt.number(), val)
                         } else {
                             self.regs[rt.number() as usize] = Value::Unknown;
                         }

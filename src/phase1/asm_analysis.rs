@@ -1,7 +1,7 @@
 use tracing::{debug, instrument, trace, warn};
 
 use yaxpeax_arch::LengthedInstruction;
-use yaxpeax_arm::armv7::{ConditionCode, Opcode, Operand, Reg};
+use yaxpeax_arm::armv7::{ConditionCode, Opcode, Operand};
 
 use crate::{
     Code,
@@ -110,7 +110,7 @@ impl AsmAnalysis {
     }
 
     /// ensure basic block at `va` is being split
-    fn ensure_split(&mut self, metadata: &mut Metadata<'_>, va: u32) {
+    fn ensure_split(&self, metadata: &mut Metadata<'_>, va: u32) {
         if let Some(idx) = metadata
             .blocks
             .iter()
@@ -183,29 +183,24 @@ impl AsmAnalysis {
             }
 
             let offset = va.wrapping_sub(metadata.base_address) as usize;
-            let data = match metadata.data.get(offset..offset + 4) {
-                Some(data) => data,
-                None => {
-                    warn!("{va:#x} out of bounds, abort analysis for the {start_va:#x} entry");
+            let Some(data) = metadata.data.get(offset..offset + 4) else {
+                warn!("{va:#x} out of bounds, abort analysis for the {start_va:#x} entry");
+                metadata.branch.discard(va);
+
+                // also drop caller who queued this instruction
+                let mut iter = metadata.branch.all_for(va);
+                if let Some(va) = iter.next() {
+                    debug!("drop caller at {va:#x}");
+                    let die = iter.next().is_some();
+                    drop(iter);
+
                     metadata.branch.discard(va);
 
-                    // also drop caller who queued this instruction
-                    let mut iter = metadata.branch.all_for(va);
-                    if let Some(va) = iter.next() {
-                        debug!("drop caller at {va:#x}");
-                        let die = iter.next().is_some();
-                        drop(iter);
-
-                        metadata.branch.discard(va);
-
-                        if die {
-                            todo!(
-                                "more than one invalid caller for {va:#x}. the CFG is really broken"
-                            );
-                        }
+                    if die {
+                        todo!("more than one invalid caller for {va:#x}. the CFG is really broken");
                     }
-                    break;
                 }
+                break;
             };
 
             let code = match Self::disassemble_oneshot(data, mode) {
@@ -372,7 +367,7 @@ impl AsmAnalysis {
                 }
                 Opcode::ADR => {
                     if let Operand::Imm32(imm) = code.instruction.operands[1] {
-                        let addr = code.va().wrapping_add(imm as u32);
+                        let addr = code.va().wrapping_add(imm);
                         metadata.refs.insert(code.va, addr);
                         trace!("add {addr:#x} to data refs");
                     } else {
