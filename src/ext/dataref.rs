@@ -1,12 +1,5 @@
 use yaxpeax_arm::armv7::Opcode;
 
-pub enum LoadSize {
-    DoubleWord,
-    Word,
-    HalfWord,
-    Byte,
-}
-
 pub trait DataRefExt {
     fn load_size(&self) -> usize;
     fn is_signed_load(&self) -> bool;
@@ -34,7 +27,9 @@ impl DataRefExt for Opcode {
 }
 
 pub fn a32_ldr_data(data: &[u8], op: Opcode) -> Option<usize> {
+    // set correct bounds
     let data = &data[..op.load_size()];
+
     match op.load_size() {
         1 => {
             let v = u8::from_le_bytes(data.try_into().unwrap());
