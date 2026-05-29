@@ -274,7 +274,7 @@ impl<'a> Analyzer<'a> {
     ///
     /// `None` if `offset` cannot be mapped (bigger than max binary size)
     pub fn map_va(&self, offset: usize) -> Option<usize> {
-        if offset < self.base_address && offset < self.data.len() {
+        if offset < self.base_address && offset < self.base_address + self.data.len() {
             Some(self.base_address + offset)
         } else {
             None
@@ -285,7 +285,7 @@ impl<'a> Analyzer<'a> {
     ///
     /// `None` if `va` cannot be unmapped (out of bounds of `[base_addr; base_addr + data.len())`)
     pub fn unmap_va(&self, va: usize) -> Option<usize> {
-        if va >= self.base_address && va < self.data.len() {
+        if va >= self.base_address && va < self.base_address + self.data.len() {
             Some(va - self.base_address)
         } else {
             None
