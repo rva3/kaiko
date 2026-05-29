@@ -14,7 +14,7 @@ use crate::{
 
 pub struct BlindAnalysis;
 impl BlindAnalysis {
-    pub fn find_fns(metadata: &Metadata) -> Vec<(usize, CpuMode)> {
+    pub fn find_fns(metadata: &Metadata) -> Vec<(u32, CpuMode)> {
         let code_blacklist = &metadata.blocks;
         let literal_blacklist = metadata.refs.values().map(|va| *va).collect::<Vec<_>>();
 
@@ -29,7 +29,7 @@ impl BlindAnalysis {
             .iter()
             .map(|b| b.end_va())
             .max()
-            .unwrap_or(metadata.base_address + metadata.data.len());
+            .unwrap_or(metadata.base_address + metadata.data.len() as u32);
 
         debug!("allow range: {min_exec_va:#x}..={max_exec_va:#x}");
 
@@ -52,18 +52,22 @@ impl BlindAnalysis {
                 continue;
             }
 
-            let off = va - metadata.base_address;
-            if off + 4 >= metadata.data.len() {
-                trace!("out of bounds, stop");
-                break;
-            }
-
-            let data = &metadata.data[off..off + 4];
-            if data.iter().all(|&i| i == 0 || i == 0xff) {
-                trace!("likely junk at {va:#x}");
-                va += 4;
-                continue;
-            }
+            let off = (va - metadata.base_address) as usize;
+            let data = match metadata.data.get(off..off + 4) {
+                Some(data) => {
+                    if data.iter().all(|&i| i == 0 || i == 0xff) {
+                        trace!("likely junk at {va:#x}");
+                        va += 4;
+                        continue;
+                    } else {
+                        data
+                    }
+                }
+                None => {
+                    trace!("out of bounds, stop");
+                    break;
+                }
+            };
 
             let (code, mode) = match disassemble_thumb_oneshot(data) {
                 Ok(code) => (code, CpuMode::Thumb),
@@ -82,7 +86,7 @@ impl BlindAnalysis {
             {
                 trace!("maybe fn at {va:#x}");
                 fns.push((va, mode));
-                va += code.instruction.len().to_const() as usize;
+                va += code.instruction.len().to_const();
             } else {
                 trace!("not fn at {va:#x}");
                 va += 2;
@@ -117,27 +121,26 @@ impl BlindAnalysis {
     }
 
     /// test if it's actual fn
-    pub fn dry_run(
-        metadata: &Metadata,
-        start_va: usize,
-        mode: CpuMode,
-        min: usize,
-        max: usize,
-    ) -> bool {
+    pub fn dry_run(metadata: &Metadata, start_va: u32, mode: CpuMode, min: u32, max: u32) -> bool {
         let mut va = start_va;
         let mut decoded = 0;
-        const MAX_DEPTH: usize = 15;
+        const MAX_DEPTH: u32 = 15;
 
         while decoded < MAX_DEPTH {
             trace!("dry run {va:#x}");
-            let offset = va.wrapping_sub(metadata.base_address);
+            let offset = va.wrapping_sub(metadata.base_address) as usize;
 
-            if offset + 4 > metadata.data.len() || va > max || va < min {
+            if va > max || va < min {
                 trace!("out of bounds, stop");
                 return false;
             }
 
-            let data = &metadata.data[offset..offset + 4];
+            let data = if let Some(data) = metadata.data.get(offset..offset + 4) {
+                data
+            } else {
+                trace!("data out of bounds, stop");
+                return false;
+            };
 
             let code = match mode {
                 CpuMode::Thumb => disassemble_thumb_oneshot(data).ok(),
@@ -169,10 +172,10 @@ impl BlindAnalysis {
                         if let Operand::BranchOffset(imm) | Operand::BranchThumbOffset(imm) =
                             code.instruction.operands[0]
                         {
-                            let target = code.pc().wrapping_add_signed(imm as isize);
+                            let target = code.pc().wrapping_add_signed(imm);
 
                             if target < metadata.base_address
-                                || target >= metadata.base_address + metadata.data.len()
+                                || target >= metadata.base_address + metadata.data.len() as u32
                             {
                                 trace!("hit junk branch/call, stop");
                                 return false; // junk
@@ -182,7 +185,7 @@ impl BlindAnalysis {
                     _ => (),
                 }
 
-                va += code.instruction.len().to_const() as usize;
+                va += code.instruction.len().to_const();
                 decoded += 1;
             } else {
                 trace!("failed to decode ({va:#x}), stop");

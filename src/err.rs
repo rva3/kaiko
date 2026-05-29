@@ -18,7 +18,7 @@ pub enum Phase1Error {
     ///
     /// shouldn't happen unless there's a bug in the analyzer
     #[error("BUG: unaligned va: {0:#x}")]
-    UnalignedVA(usize),
+    UnalignedVA(u32),
 
     #[error("Self-test error: {0}")]
     SelfTest(#[from] Phase1SelfTestError),
@@ -27,16 +27,16 @@ pub enum Phase1Error {
 #[derive(Debug, thiserror::Error)]
 pub enum Phase1SelfTestError {
     #[error("VA range {0:#x?} is invalid, start must be less or be the same to end")]
-    VARange(RangeInclusive<usize>),
+    VARange(RangeInclusive<u32>),
 
     #[error("Instruction at {0:#x} is used in multiple blocks")]
-    DuplicateInstructionUsage(usize),
+    DuplicateInstructionUsage(u32),
 
     #[error("Instruction at {0:#x} doesn't belong to any basic block")]
-    UnusedInstruction(usize),
+    UnusedInstruction(u32),
 
     #[error("Instruction at {0:#x} is jump but there's no basic block starting with it")]
-    JumpIsNotBlockStart(usize),
+    JumpIsNotBlockStart(u32),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -48,5 +48,5 @@ pub enum Phase2Error {
 #[derive(Debug, thiserror::Error)]
 pub enum Phase2SelfTestError {
     #[error("Block at {0:#x} is marked as function, but has predecessors")]
-    InvalidFnStart(usize),
+    InvalidFnStart(u32),
 }

@@ -31,7 +31,7 @@ pub use yaxpeax_arm;
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Code {
     instruction: Instruction,
-    va: usize,
+    va: u32,
 }
 
 impl PartialOrd for Code {
@@ -47,7 +47,7 @@ impl Ord for Code {
 }
 
 impl Code {
-    pub fn new(instruction: Instruction, va: usize) -> Self {
+    pub fn new(instruction: Instruction, va: u32) -> Self {
         Self { instruction, va }
     }
 
@@ -59,14 +59,14 @@ impl Code {
 
     #[inline(always)]
     #[must_use]
-    pub fn va(&self) -> usize {
+    pub fn va(&self) -> u32 {
         self.va
     }
 
     /// get PC offset for current instruction
     #[inline(always)]
     #[must_use]
-    pub(crate) fn pc(&self) -> usize {
+    pub(crate) fn pc(&self) -> u32 {
         self.va + if self.instruction.thumb() { 4 } else { 8 }
     }
 }
@@ -79,15 +79,15 @@ impl Display for Code {
 
 pub struct Analyzer<'a> {
     data: &'a [u8],
-    base_address: usize,
+    base_address: u32,
     metadata: P2Metadata<'a>,
 }
 
 impl<'a> Analyzer<'a> {
     pub fn try_new(
         data: &'a [u8],
-        base_address: usize,
-        entry_offset: usize,
+        base_address: u32,
+        entry_offset: u32,
         entry_mode: CpuMode,
     ) -> Result<Self> {
         debug!("phase 1: disassemble code");
@@ -158,19 +158,19 @@ impl<'a> Analyzer<'a> {
     }
 
     /// read a raw byte slice from a VA
-    pub fn read_bytes(&self, va: usize, len: usize) -> Option<&[u8]> {
+    pub fn read_bytes(&self, va: u32, len: u32) -> Option<&[u8]> {
         let offset = self.unmap_va(va)?;
-        self.data.get(offset..offset + len)
+        self.data.get(offset..offset + len as usize)
     }
 
     /// read LE u32
-    pub fn read_u32(&self, va: usize) -> Option<u32> {
+    pub fn read_u32(&self, va: u32) -> Option<u32> {
         let bytes = self.read_bytes(va, 4)?;
         Some(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     /// read a null-terminated C string
-    pub fn read_cstr(&self, va: usize) -> Option<&str> {
+    pub fn read_cstr(&self, va: u32) -> Option<&str> {
         let offset = self.unmap_va(va)?;
         let slice = &self.data[offset..];
         let null_idx = memchr::memchr(0, slice)?;
@@ -198,18 +198,18 @@ impl<'a> Analyzer<'a> {
     }
 
     /// get function which has `va`
-    pub fn fn_by_va(&self, va: usize) -> Option<FunctionView<'_>> {
+    pub fn fn_by_va(&self, va: u32) -> Option<FunctionView<'_>> {
         self.functions().find(|f| f.contains_va(va))
     }
 
     /// get basic block which has `va`
-    pub fn block_by_va(&self, va: usize) -> Option<BasicBlockView<'_>> {
+    pub fn block_by_va(&self, va: u32) -> Option<BasicBlockView<'_>> {
         self.blocks().find(|b| b.contains_va(va))
     }
 
     /// get functions which reference `s`
     pub fn fns_by_str(&self, s: &str) -> Option<impl Iterator<Item = FunctionView<'_>>> {
-        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)?;
+        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
@@ -222,7 +222,7 @@ impl<'a> Analyzer<'a> {
 
     /// get blocks which reference `s`
     pub fn blocks_by_str(&self, s: &str) -> Option<impl Iterator<Item = BasicBlockView<'_>>> {
-        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)?;
+        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
@@ -235,7 +235,7 @@ impl<'a> Analyzer<'a> {
 
     /// get instructions which reference `s`
     pub fn instructions_by_str(&self, s: &str) -> Option<impl Iterator<Item = &Code>> {
-        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)?;
+        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
@@ -273,8 +273,9 @@ impl<'a> Analyzer<'a> {
     /// map raw `offset` to VA
     ///
     /// `None` if `offset` cannot be mapped (bigger than max binary size)
-    pub fn map_va(&self, offset: usize) -> Option<usize> {
-        if offset < self.base_address && offset < self.base_address + self.data.len() {
+    pub fn map_va(&self, offset: usize) -> Option<u32> {
+        let offset = offset as u32;
+        if offset < self.base_address && offset < self.base_address + self.data.len() as u32 {
             Some(self.base_address + offset)
         } else {
             None
@@ -284,9 +285,9 @@ impl<'a> Analyzer<'a> {
     /// unmap `va` to raw offset
     ///
     /// `None` if `va` cannot be unmapped (out of bounds of `[base_addr; base_addr + data.len())`)
-    pub fn unmap_va(&self, va: usize) -> Option<usize> {
-        if va >= self.base_address && va < self.base_address + self.data.len() {
-            Some(va - self.base_address)
+    pub fn unmap_va(&self, va: u32) -> Option<usize> {
+        if va >= self.base_address && va < self.base_address + self.data.len() as u32 {
+            Some((va - self.base_address) as usize)
         } else {
             None
         }

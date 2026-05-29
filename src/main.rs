@@ -16,12 +16,12 @@ struct Cli {
     s: Option<String>,
 
     /// Binary base address
-    #[arg(short, long, value_parser=maybe_hex::<usize>)]
-    base: usize,
+    #[arg(short, long, value_parser=maybe_hex::<u32>)]
+    base: u32,
 
     /// Binary entrypoint
-    #[arg(short, long, value_parser=maybe_hex::<usize>)]
-    offset: Option<usize>,
+    #[arg(short, long, value_parser=maybe_hex::<u32>)]
+    offset: Option<u32>,
 }
 
 fn main() -> Result<(), String> {

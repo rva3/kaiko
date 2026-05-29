@@ -22,7 +22,7 @@ impl From<&Code> for CpuMode {
 
 impl CpuMode {
     #[must_use]
-    pub fn from_code_and_va(code: &Code, va: usize) -> Self {
+    pub fn from_code_and_va(code: &Code, va: u32) -> Self {
         if va & 1 != 0 {
             CpuMode::Thumb
         } else {
@@ -36,7 +36,7 @@ impl CpuMode {
     }
 
     #[must_use]
-    pub fn align_va_on_switch(&self, to: &Self, va: usize) -> usize {
+    pub fn align_va_on_switch(&self, to: &Self, va: u32) -> u32 {
         match (self, to) {
             // thumb align is 2 bytes
             (Self::Arm, Self::Thumb) => va & !1,

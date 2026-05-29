@@ -22,15 +22,15 @@ pub(crate) mod fn_analysis;
 pub struct Metadata<'a> {
     data: &'a [u8],
     /// binary base address
-    base_address: usize,
+    base_address: u32,
     /// all disassembled instructions
-    pub bin: BTreeMap<usize, Code>,
+    pub bin: BTreeMap<u32, Code>,
     /// all basic blocks
     pub blocks: Vec<BasicBlock>,
     /// all functions
     pub fns: Vec<Function>,
     /// all data references
-    pub refs: HashMap<usize, usize>,
+    pub refs: HashMap<u32, u32>,
     /// branch data
     branch: BranchAnalysis,
 }
@@ -47,10 +47,10 @@ impl Eq for Metadata<'_> {}
 impl<'a> Metadata<'a> {
     pub fn new(
         data: &'a [u8],
-        base_address: usize,
-        bin: BTreeMap<usize, Code>,
+        base_address: u32,
+        bin: BTreeMap<u32, Code>,
         blocks: Vec<BasicBlock>,
-        refs: HashMap<usize, usize>,
+        refs: HashMap<u32, u32>,
         branch: BranchAnalysis,
     ) -> Self {
         Self {
@@ -68,13 +68,13 @@ impl<'a> Metadata<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct BasicBlock {
     /// code range for the `bin`
-    range: RangeInclusive<usize>,
+    range: RangeInclusive<u32>,
     /// block mode
     mode: CpuMode,
     /// previous blocks which jump to this one
-    predecessors: Vec<usize>,
+    predecessors: Vec<u32>,
     /// next blocks after this one
-    successors: Vec<usize>,
+    successors: Vec<u32>,
     /// state when the block is entered
     state: RegWriteTracker,
 }
@@ -93,10 +93,10 @@ impl Ord for BasicBlock {
 
 impl BasicBlock {
     pub(crate) fn new(
-        range: RangeInclusive<usize>,
+        range: RangeInclusive<u32>,
         mode: CpuMode,
-        predecessors: Vec<usize>,
-        successors: Vec<usize>,
+        predecessors: Vec<u32>,
+        successors: Vec<u32>,
         state: RegWriteTracker,
     ) -> Self {
         Self {
@@ -109,17 +109,17 @@ impl BasicBlock {
     }
 
     /// is the `va` in the block?
-    fn contains_va(&self, va: usize) -> bool {
+    fn contains_va(&self, va: u32) -> bool {
         self.range.contains(&va)
     }
 
     /// block start VA
-    fn start_va(&self) -> usize {
+    fn start_va(&self) -> u32 {
         *self.range.start()
     }
 
     /// block end VA
-    fn end_va(&self) -> usize {
+    fn end_va(&self) -> u32 {
         *self.range.end()
     }
 }
@@ -180,17 +180,17 @@ impl<'a> BasicBlockView<'a> {
     }
 
     /// is the `va` in the block?
-    pub fn contains_va(&self, va: usize) -> bool {
+    pub fn contains_va(&self, va: u32) -> bool {
         self.block.contains_va(va)
     }
 
     /// block start VA
-    pub fn start_va(&self) -> usize {
+    pub fn start_va(&self) -> u32 {
         self.block.start_va()
     }
 
     /// block end VA
-    pub fn end_va(&self) -> usize {
+    pub fn end_va(&self) -> u32 {
         self.block.end_va()
     }
 
@@ -283,12 +283,12 @@ impl<'a> FunctionView<'a> {
     }
 
     /// is the `va` in the function?
-    pub fn contains_va(&self, va: usize) -> bool {
+    pub fn contains_va(&self, va: u32) -> bool {
         self.blocks().any(|b| b.contains_va(va))
     }
 
     /// function start VA
-    pub fn start_va(&self) -> usize {
+    pub fn start_va(&self) -> u32 {
         self.blocks()
             .next()
             .expect("function can't have empty body")
@@ -332,7 +332,7 @@ impl<'a> RegisterView<'a> {
     /// calculate register state **BEFORE** `va` would be executed
     ///
     /// `None` if `va` doesn't exist
-    pub fn state_at(&self, va: usize) -> Option<RegisterState> {
+    pub fn state_at(&self, va: u32) -> Option<RegisterState> {
         let block = self.metadata.blocks.iter().find(|b| b.contains_va(va))?;
 
         // clone is fine because we don't want to mutate existing block
@@ -353,7 +353,7 @@ impl<'a> RegisterView<'a> {
     /// calculate register state **AFTER** `va` is executed
     ///
     /// `None` if `va` doesn't exist
-    pub fn state_at_after(&self, va: usize) -> Option<RegisterState> {
+    pub fn state_at_after(&self, va: u32) -> Option<RegisterState> {
         let block = self.metadata.blocks.iter().find(|b| b.contains_va(va))?;
 
         // clone is fine because we don't want to mutate existing block
@@ -374,7 +374,7 @@ impl<'a> RegisterView<'a> {
     /// calculate register state for `r` register **BEFORE** `va` would be executed
     ///
     /// `None` if `va` doesn't exist
-    pub fn state_for_reg(&self, va: usize, r: u8) -> Option<Value> {
+    pub fn state_for_reg(&self, va: u32, r: u8) -> Option<Value> {
         let block = self.metadata.blocks.iter().find(|b| b.contains_va(va))?;
 
         // clone is fine because we don't want to mutate existing block
@@ -395,7 +395,7 @@ impl<'a> RegisterView<'a> {
     /// calculate register state for `r` register **AFTER** `va` is executed
     ///
     /// `None` if `va` doesn't exist
-    pub fn state_for_reg_after(&self, va: usize, r: u8) -> Option<Value> {
+    pub fn state_for_reg_after(&self, va: u32, r: u8) -> Option<Value> {
         let block = self.metadata.blocks.iter().find(|b| b.contains_va(va))?;
 
         // clone is fine because we don't want to mutate existing block
@@ -414,7 +414,7 @@ impl<'a> RegisterView<'a> {
     }
 
     /// get immediate value from the `r` register at `va`
-    pub fn try_get_imm(&self, va: usize, r: u8) -> Option<u32> {
+    pub fn try_get_imm(&self, va: u32, r: u8) -> Option<u32> {
         let rwt = RegWriteTracker::from_regs(self.state_at(va)?);
         rwt.try_get_imm(
             Reg::from_u8(r),
