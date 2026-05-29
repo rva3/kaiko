@@ -5,6 +5,8 @@ use std::{
     ops::RangeInclusive,
 };
 
+use yaxpeax_arm::armv7::Reg;
+
 use crate::{
     Code,
     cpu_mode::CpuMode,
@@ -409,5 +411,15 @@ impl<'a> RegisterView<'a> {
         }
 
         None
+    }
+
+    /// get immediate value from the `r` register at `va`
+    pub fn try_get_imm(&self, va: usize, r: u8) -> Option<u32> {
+        let rwt = RegWriteTracker::from_regs(self.state_at(va)?);
+        rwt.try_get_imm(
+            Reg::from_u8(r),
+            self.metadata.base_address,
+            self.metadata.data,
+        )
     }
 }
