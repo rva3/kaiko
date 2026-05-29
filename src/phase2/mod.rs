@@ -179,6 +179,16 @@ impl<'a> BasicBlockView<'a> {
         bin.range(range).map(|(_, code)| code)
     }
 
+    /// get data references in the current block
+    pub fn data_refs(&self) -> impl DoubleEndedIterator<Item = (&Code, u32)> {
+        self.code().filter_map(|c| {
+            self.metadata
+                .refs
+                .get(&c.va())
+                .map(|&target_va| (c, target_va))
+        })
+    }
+
     /// is the `va` in the block?
     pub fn contains_va(&self, va: u32) -> bool {
         self.block.contains_va(va)
