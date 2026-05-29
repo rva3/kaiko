@@ -47,7 +47,7 @@ impl Ord for Code {
 }
 
 impl Code {
-    pub fn new(instruction: Instruction, va: u32) -> Self {
+    pub(crate) fn new(instruction: Instruction, va: u32) -> Self {
         Self { instruction, va }
     }
 
@@ -84,7 +84,6 @@ pub struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
-    #[must_use]
     pub fn try_new(
         data: &'a [u8],
         base_address: u32,
@@ -92,7 +91,7 @@ impl<'a> Analyzer<'a> {
         entry_mode: CpuMode,
     ) -> Result<Self> {
         debug!("phase 1: disassemble code");
-        let mut metadata = P1Metadata::new(&data, base_address);
+        let mut metadata = P1Metadata::new(data, base_address);
         let mut analyzer = AsmAnalysis::new();
         let mut indirect = IndirectAnalysis::new();
 
@@ -107,20 +106,20 @@ impl<'a> Analyzer<'a> {
             #[cfg(not(feature = "unchecked"))]
             analyzer
                 .self_test(&metadata)
-                .inspect(|_| debug!("phase 1: self-test passed"))?;
+                .inspect(|()| debug!("phase 1: self-test passed"))?;
             let jumps = indirect.resolve_register_state(&mut metadata);
             let indirect_fns = IndirectFnAnalysis::fns(&metadata);
 
             if indirect.queue.is_empty() && jumps.is_empty() && indirect_fns.is_empty() {
-                if !blind_scan_ran {
+                if blind_scan_ran {
+                    break;
+                } else {
                     for (va, mode) in BlindAnalysis::find_fns(&metadata) {
                         analyzer.enqueue_va(&mut metadata, va, mode);
                     }
 
                     // allow only once
                     blind_scan_ran = true;
-                } else {
-                    break;
                 }
             }
 
@@ -182,12 +181,10 @@ impl<'a> Analyzer<'a> {
     }
 
     /// all instructions
-    #[must_use]
     pub fn code(&self) -> impl Iterator<Item = &Code> {
-        self.functions().map(|f| f.code()).flatten()
+        self.functions().flat_map(|f| f.code())
     }
 
-    #[must_use]
     pub fn blocks(&self) -> impl Iterator<Item = BasicBlockView<'_>> {
         self.metadata
             .blocks
@@ -196,7 +193,6 @@ impl<'a> Analyzer<'a> {
     }
 
     /// all functions
-    #[must_use]
     pub fn functions(&self) -> impl Iterator<Item = FunctionView<'_>> {
         self.metadata
             .fns
@@ -219,63 +215,58 @@ impl<'a> Analyzer<'a> {
     /// get functions which reference `s`
     #[must_use]
     pub fn fns_by_str(&self, s: &str) -> Option<impl Iterator<Item = FunctionView<'_>>> {
-        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
+        let data_va = self.map_va(memmem::find(self.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
                 .iter()
                 .filter(move |(_, known_data_va)| data_va == **known_data_va)
-                .map(|(&code_va, _)| self.fn_by_va(code_va))
-                .filter_map(|f| f),
+                .filter_map(|(&code_va, _)| self.fn_by_va(code_va)),
         )
     }
 
     /// get blocks which reference `s`
     #[must_use]
     pub fn blocks_by_str(&self, s: &str) -> Option<impl Iterator<Item = BasicBlockView<'_>>> {
-        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
+        let data_va = self.map_va(memmem::find(self.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
                 .iter()
                 .filter(move |(_, known_data_va)| data_va == **known_data_va)
-                .map(|(&code_va, _)| self.block_by_va(code_va))
-                .filter_map(|b| b),
+                .filter_map(|(&code_va, _)| self.block_by_va(code_va)),
         )
     }
 
     /// get instructions which reference `s`
     #[must_use]
     pub fn instructions_by_str(&self, s: &str) -> Option<impl Iterator<Item = &Code>> {
-        let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
+        let data_va = self.map_va(memmem::find(self.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
                 .iter()
                 .filter(move |(_, known_data_va)| data_va == **known_data_va)
-                .map(|(code_va, _)| self.metadata.bin.get(code_va))
-                .filter_map(|c| c),
+                .filter_map(|(code_va, _)| self.metadata.bin.get(code_va)),
         )
     }
 
     /// like `fns_by_str` but only for the first function
     #[must_use]
     pub fn fn_by_str(&self, s: &str) -> Option<FunctionView<'_>> {
-        self.fns_by_str(s).map(|mut iter| iter.next()).flatten()
+        self.fns_by_str(s).and_then(|mut iter| iter.next())
     }
 
     /// like `blocks_by_str` but only for the first block
     #[must_use]
     pub fn block_by_str(&self, s: &str) -> Option<BasicBlockView<'_>> {
-        self.blocks_by_str(s).map(|mut iter| iter.next()).flatten()
+        self.blocks_by_str(s).and_then(|mut iter| iter.next())
     }
 
     /// like `instruction_by_str` but only for the first instruction
     #[must_use]
     pub fn instruction_by_str(&self, s: &str) -> Option<&Code> {
-        self.instructions_by_str(s)
-            .map(|mut iter| iter.next())
-            .flatten()
+        self.instructions_by_str(s).and_then(|mut iter| iter.next())
     }
 
     /// get function by the basic block

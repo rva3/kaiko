@@ -53,21 +53,16 @@ impl BlindAnalysis {
             }
 
             let off = (va - metadata.base_address) as usize;
-            let data = match metadata.data.get(off..off + 4) {
-                Some(data) => {
-                    if data.iter().all(|&i| i == 0 || i == 0xff) {
-                        trace!("likely junk at {va:#x}");
-                        va += 4;
-                        continue;
-                    } else {
-                        data
-                    }
-                }
-                None => {
-                    trace!("out of bounds, stop");
-                    break;
-                }
+            let Some(data) = metadata.data.get(off..off + 4) else {
+                trace!("out of bounds, stop");
+                break;
             };
+
+            if data.iter().all(|&i| i == 0 || i == 0xff) {
+                trace!("likely junk at {va:#x}");
+                va += 4;
+                continue;
+            }
 
             let (code, mode) = match disassemble_thumb_oneshot(data) {
                 Ok(code) => (code, CpuMode::Thumb),

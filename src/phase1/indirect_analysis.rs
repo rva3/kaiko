@@ -24,7 +24,7 @@ impl IndirectAnalysis {
 
         // all blocks go into queue
         self.queue.clear();
-        for block in metadata.blocks.iter() {
+        for block in &metadata.blocks {
             self.queue.push(block.start_va());
         }
 
@@ -43,23 +43,21 @@ impl IndirectAnalysis {
 
                 rwt.step(code, metadata.data, metadata.base_address);
 
-                match metadata.branch.get_callee(*va) {
-                    Some(JumpType::IndirectCall(r) | JumpType::IndirectJump(r)) => {
-                        if let Some(value) =
-                            rwt.try_get_imm(*r, metadata.base_address, metadata.data)
-                            && let Some(value) = metadata.map_va(value)
-                        {
-                            debug!("solved indirection: r{} -> {value:#x}", r.number());
-                            let new_mode = CpuMode::from_code_and_va(&code, value);
-                            let new_value = mode.align_va_on_switch(&new_mode, value);
+                if let Some(JumpType::IndirectCall(r) | JumpType::IndirectJump(r)) =
+                    metadata.branch.get_callee(*va)
+                {
+                    if let Some(value) = rwt.try_get_imm(*r, metadata.base_address, metadata.data)
+                        && let Some(value) = metadata.map_va(value)
+                    {
+                        debug!("solved indirection: r{} -> {value:#x}", r.number());
+                        let new_mode = CpuMode::from_code_and_va(code, value);
+                        let new_value = mode.align_va_on_switch(&new_mode, value);
 
-                            // even though this is technically indirect call, let's promote it to direct
-                            // so it can be properly resolved by the `AsmAnalysis` and external crates
-                            metadata.branch.mark_as_direct_call(*va, new_value);
-                            new_jumps.push((new_value, new_mode));
-                        }
+                        // even though this is technically indirect call, let's promote it to direct
+                        // so it can be properly resolved by the `AsmAnalysis` and external crates
+                        metadata.branch.mark_as_direct_call(*va, new_value);
+                        new_jumps.push((new_value, new_mode));
                     }
-                    _ => (),
                 }
             }
 

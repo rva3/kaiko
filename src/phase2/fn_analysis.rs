@@ -62,7 +62,7 @@ impl FnAnalysis {
                     .map(|&i| metadata.blocks[i].start_va())
                     .collect::<Vec<_>>()
             );
-            metadata.fns.push(Function::new(fn_blocks))
+            metadata.fns.push(Function::new(fn_blocks));
         }
     }
 }

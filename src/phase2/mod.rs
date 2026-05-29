@@ -245,10 +245,10 @@ impl Display for FunctionView<'_> {
             .enumerate()
             .try_for_each(|(i, b)| -> std::fmt::Result {
                 write!(f, "{:#x}-{:#x}", b.start_va(), b.end_va())?;
-                if i != count - 1 {
-                    write!(f, ", ")
-                } else {
+                if i == count - 1 {
                     Ok(())
+                } else {
+                    write!(f, ", ")
                 }
             })?;
         writeln!(f)?;
@@ -315,12 +315,10 @@ pub struct RegisterView<'a> {
 
 impl Display for RegisterView<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        (0..=15)
-            .map(|i| {
-                write!(f, "{}", self.rwt.get(i))?;
-                if i != 15 { write!(f, ", ") } else { Ok(()) }
-            })
-            .collect::<std::fmt::Result>()
+        (0..=15).try_for_each(|i| {
+            write!(f, "{}", self.rwt.get(i))?;
+            if i == 15 { Ok(()) } else { write!(f, ", ") }
+        })
     }
 }
 
