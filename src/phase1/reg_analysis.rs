@@ -3,7 +3,7 @@ use std::fmt::Display;
 use tracing::trace;
 use yaxpeax_arm::armv7::{Opcode, Operand, Reg};
 
-use crate::{Code, regext::RegExt};
+use crate::{Code, ext::dataref::a32_ldr_data, regext::RegExt};
 
 pub type RegisterState = [Value; 16];
 
@@ -180,19 +180,18 @@ impl RegWriteTracker {
                 {
                     let offset = if up { imm as i32 } else { -(imm as i32) };
                     if reg.is_pc() {
-                        let abs_pc = code.pc() & !3;
-                        let abs_addr = abs_pc
+                        let align_pc = code.pc() & !3;
+                        let bin_offset = align_pc
                             .wrapping_sub(base_address)
                             .wrapping_add_signed(offset as isize);
                         trace!(
-                            "LDR: literal load at {code} for {abs_addr:#x} to {}",
+                            "LDR: literal load at {code} for {bin_offset:#x} to {}",
                             rt.number()
                         );
-                        if let Some(bytes) = data.get(abs_addr..abs_addr + 4) {
-                            self.immediate(
-                                rt.number(),
-                                u32::from_le_bytes(bytes.try_into().unwrap()),
-                            )
+                        if let Some(val) =
+                            a32_ldr_data(&data[bin_offset..], code.instruction.opcode)
+                        {
+                            self.immediate(rt.number(), val as u32)
                         } else {
                             self.regs[rt.number() as usize] = Value::Unknown;
                         }
@@ -210,20 +209,47 @@ impl RegWriteTracker {
                 if let Operand::Reg(rd) = code.instruction.operands[0]
                     && let Operand::Reg(rn) = code.instruction.operands[1]
                 {
-                    let imm = if let Operand::Imm32(imm) = code.instruction.operands[2] {
-                        imm
-                    } else {
-                        0
-                    };
-                    let offset = if code.instruction.opcode == Opcode::ADD {
-                        imm as i32
-                    } else {
-                        -(imm as i32)
-                    };
+                    let is_add = code.instruction.opcode == Opcode::ADD;
 
-                    let new_value = match (self.get(rd.number()), self.get(rn.number())) {
-                        (Value::Immediate(v1), Value::Immediate(v2)) => {
-                            Value::Immediate((v1 + v2).wrapping_add_signed(offset))
+                    let new_value = match code.instruction.operands[2] {
+                        // ADD Rd, Rn, #imm
+                        Operand::Imm32(imm) => {
+                            let offset = if is_add { imm as i32 } else { -(imm as i32) };
+                            if let Value::Immediate(v_rn) = self.get(rn.number()) {
+                                Value::Immediate(v_rn.wrapping_add_signed(offset))
+                            } else {
+                                Value::Unknown
+                            }
+                        }
+                        // ADD Rd, Rn, Rm
+                        Operand::Reg(rm) => {
+                            if let (Value::Immediate(v_rn), Value::Immediate(v_rm)) =
+                                (self.get(rn.number()), self.get(rm.number()))
+                            {
+                                let result = if is_add {
+                                    v_rn.wrapping_add(v_rm)
+                                } else {
+                                    v_rn.wrapping_sub(v_rm)
+                                };
+                                Value::Immediate(result)
+                            } else {
+                                Value::Unknown
+                            }
+                        }
+                        // ADD Rd, Rn
+                        Operand::Nothing => {
+                            if let (Value::Immediate(v_rd), Value::Immediate(v_rn)) =
+                                (self.get(rd.number()), self.get(rn.number()))
+                            {
+                                let result = if is_add {
+                                    v_rd.wrapping_add(v_rn)
+                                } else {
+                                    v_rd.wrapping_sub(v_rn)
+                                };
+                                Value::Immediate(result)
+                            } else {
+                                Value::Unknown
+                            }
                         }
                         _ => Value::Unknown,
                     };

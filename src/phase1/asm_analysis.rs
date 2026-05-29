@@ -7,6 +7,7 @@ use crate::{
     Code,
     cpu_mode::CpuMode,
     err::Phase1Error,
+    ext::dataref::a32_ldr_data,
     phase1::{
         BasicBlock, Metadata,
         disasm::{disassemble_arm_oneshot, disassemble_thumb_oneshot},
@@ -340,11 +341,11 @@ impl AsmAnalysis {
                             load.wrapping_sub(imm as usize)
                         };
 
-                        if let Some(bytes) = metadata.data.get(load..load + 4) {
+                        if let Some(reg_val) =
+                            a32_ldr_data(&metadata.data[load..], code.instruction.opcode)
+                        {
                             // jump
                             if rt.is_pc() && imm == { if mode == CpuMode::Arm { 4 } else { 0 } } {
-                                let reg_val =
-                                    u32::from_le_bytes(bytes.try_into().unwrap()) as usize;
                                 if reg_val >= metadata.base_address
                                     && reg_val < metadata.base_address + metadata.data.len()
                                 {
