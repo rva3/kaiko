@@ -26,7 +26,7 @@ impl DataRefExt for Opcode {
     }
 }
 
-pub fn a32_ldr_data(data: &[u8], op: Opcode) -> Option<usize> {
+pub fn a32_ldr_data(data: &[u8], op: Opcode) -> Option<u32> {
     // set correct bounds
     let data = &data[..op.load_size()];
 
@@ -34,25 +34,25 @@ pub fn a32_ldr_data(data: &[u8], op: Opcode) -> Option<usize> {
         1 => {
             let v = u8::from_le_bytes(data.try_into().unwrap());
             if op.is_signed_load() {
-                Some((v as i8) as usize)
+                Some((v as i8) as u32)
             } else {
-                Some(v as usize)
+                Some(v as u32)
             }
         }
         2 => {
             let v = u16::from_le_bytes(data.try_into().unwrap());
             if op.is_signed_load() {
-                Some((v as i16) as usize)
+                Some((v as i16) as u32)
             } else {
-                Some(v as usize)
+                Some(v as u32)
             }
         }
         4 => {
             let v = u32::from_le_bytes(data.try_into().unwrap());
             if op.is_signed_load() {
-                Some((v as i32) as usize)
+                Some((v as i32) as u32)
             } else {
-                Some(v as usize)
+                Some(v as u32)
             }
         }
         8 => todo!(),

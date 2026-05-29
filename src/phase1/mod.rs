@@ -26,21 +26,21 @@ pub struct Metadata<'a> {
     /// binary content
     data: &'a [u8],
     /// binary base address
-    base_address: usize,
+    base_address: u32,
 
     /// all disassembled instructions
-    pub bin: BTreeMap<usize, Code>,
+    pub bin: BTreeMap<u32, Code>,
     /// all basic blocks
     pub blocks: Vec<BasicBlock>,
     /// branch metadata
     pub branch: BranchAnalysis,
 
     /// literals usage, mapped as <code va, literal va>
-    pub refs: HashMap<usize, usize>,
+    pub refs: HashMap<u32, u32>,
 }
 
 impl<'a> Metadata<'a> {
-    pub fn new(data: &'a [u8], base_address: usize) -> Self {
+    pub fn new(data: &'a [u8], base_address: u32) -> Self {
         Self {
             data,
             base_address,
@@ -57,16 +57,16 @@ impl<'a> Metadata<'a> {
 
     #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
     #[inline(always)]
-    pub fn map_va(&self, va: usize) -> Option<usize> {
+    pub fn map_va(&self, va: u32) -> Option<u32> {
         if va < self.base_address {
-            if va < self.data.len() {
+            if va < self.data.len() as u32 {
                 Some(self.base_address + va)
             } else {
                 warn!("failed to map {va:#x}: less than base addr but more than data len");
                 None
             }
         } else {
-            if va < self.base_address + self.data.len() {
+            if va < self.base_address + self.data.len() as u32 {
                 Some(va)
             } else {
                 warn!("failed to map {va:#x}: more than base addr and more than data len");
@@ -99,14 +99,14 @@ impl<'a> Metadata<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct BasicBlock {
     /// code range for the `bin`
-    pub range: RangeInclusive<usize>,
+    pub range: RangeInclusive<u32>,
     /// block mode
     pub mode: CpuMode,
 
     /// previous blocks
-    pub predecessors: Vec<usize>,
+    pub predecessors: Vec<u32>,
     /// next blocks
-    pub successors: Vec<usize>,
+    pub successors: Vec<u32>,
 
     /// state when block is entered (inherited from the previous block(s))
     pub entry_state: RegWriteTracker,
@@ -115,7 +115,7 @@ pub struct BasicBlock {
 }
 
 impl BasicBlock {
-    fn new(range: RangeInclusive<usize>, mode: CpuMode) -> Self {
+    fn new(range: RangeInclusive<u32>, mode: CpuMode) -> Self {
         Self {
             range,
             mode,
@@ -128,17 +128,17 @@ impl BasicBlock {
     }
 
     /// start of the block range
-    pub fn start_va(&self) -> usize {
+    pub fn start_va(&self) -> u32 {
         *self.range.start()
     }
 
     /// end of the block range
-    pub fn end_va(&self) -> usize {
+    pub fn end_va(&self) -> u32 {
         *self.range.end()
     }
 
     /// does the current block contain `va`?
-    pub fn contains_va(&self, va: usize) -> bool {
+    pub fn contains_va(&self, va: u32) -> bool {
         self.range.contains(&va)
     }
 }

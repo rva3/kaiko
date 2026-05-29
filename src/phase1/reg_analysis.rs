@@ -88,7 +88,7 @@ impl RegWriteTracker {
         self.regs[reg as usize].clone()
     }
 
-    pub fn try_get_imm(&self, reg: Reg, base_address: usize, data: &[u8]) -> Option<u32> {
+    pub fn try_get_imm(&self, reg: Reg, base_address: u32, data: &[u8]) -> Option<u32> {
         match self.get(reg.number()) {
             Value::Uninitialized | Value::Unknown => {
                 if reg.is_pc() {
@@ -115,12 +115,9 @@ impl RegWriteTracker {
                     .try_get_imm(r, base_address, data)?
                     .wrapping_add_signed(offset);
 
-                let load = (ptr as usize).checked_sub(base_address)?;
-                if data.len() < load + 4 {
-                    None
-                } else {
-                    Some(u32::from_le_bytes(data[load..load + 4].try_into().unwrap()))
-                }
+                let load = ptr.checked_sub(base_address)? as usize;
+                data.get(load..load + 4)
+                    .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
             }
         }
     }
@@ -141,7 +138,7 @@ impl RegWriteTracker {
         changed
     }
 
-    pub fn step(&mut self, code: &Code, data: &[u8], base_address: usize) {
+    pub fn step(&mut self, code: &Code, data: &[u8], base_address: u32) {
         self.immediate(15, code.pc() as u32);
 
         trace!("register analysis: step in {code}");
@@ -183,13 +180,13 @@ impl RegWriteTracker {
                         let align_pc = code.pc() & !3;
                         let bin_offset = align_pc
                             .wrapping_sub(base_address)
-                            .wrapping_add_signed(offset as isize);
+                            .wrapping_add_signed(offset);
                         trace!(
                             "LDR: literal load at {code} for {bin_offset:#x} to {}",
                             rt.number()
                         );
                         if let Some(val) =
-                            a32_ldr_data(&data[bin_offset..], code.instruction.opcode)
+                            a32_ldr_data(&data[bin_offset as usize..], code.instruction.opcode)
                         {
                             self.immediate(rt.number(), val as u32)
                         } else {

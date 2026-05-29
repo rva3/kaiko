@@ -6,7 +6,7 @@ use crate::{
 };
 
 pub struct IndirectAnalysis {
-    pub queue: Vec<usize>,
+    pub queue: Vec<u32>,
 }
 
 impl IndirectAnalysis {
@@ -19,7 +19,7 @@ impl IndirectAnalysis {
     /// this is similar to `process_va_block`, but instead of raw instructions,
     /// the branch analysis metadata is used
     #[instrument(skip(self, metadata), level = "trace")]
-    pub fn resolve_register_state(&mut self, metadata: &mut Metadata<'_>) -> Vec<(usize, CpuMode)> {
+    pub fn resolve_register_state(&mut self, metadata: &mut Metadata<'_>) -> Vec<(u32, CpuMode)> {
         let mut new_jumps = Vec::new();
 
         // all blocks go into queue
@@ -47,7 +47,7 @@ impl IndirectAnalysis {
                     Some(JumpType::IndirectCall(r) | JumpType::IndirectJump(r)) => {
                         if let Some(value) =
                             rwt.try_get_imm(*r, metadata.base_address, metadata.data)
-                            && let Some(value) = metadata.map_va(value as usize)
+                            && let Some(value) = metadata.map_va(value)
                         {
                             debug!("solved indirection: r{} -> {value:#x}", r.number());
                             let new_mode = CpuMode::from_code_and_va(&code, value);

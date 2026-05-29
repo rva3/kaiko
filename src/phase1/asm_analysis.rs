@@ -19,9 +19,9 @@ type Result<T> = core::result::Result<T, Phase1Error>;
 
 pub struct AsmAnalysis {
     /// VA queue
-    queue: Vec<(usize, CpuMode)>,
+    queue: Vec<(u32, CpuMode)>,
     /// bad callers
-    bad: Vec<usize>,
+    bad: Vec<u32>,
 }
 
 impl AsmAnalysis {
@@ -75,9 +75,9 @@ impl AsmAnalysis {
         }
 
         // all jump targets must start block
-        let block_starts: HashSet<usize> = metadata.blocks.iter().map(|b| b.start_va()).collect();
+        let block_starts: HashSet<u32> = metadata.blocks.iter().map(|b| b.start_va()).collect();
 
-        let do_va_check = |va: usize| -> Result<()> {
+        let do_va_check = |va: u32| -> Result<()> {
             if block_starts.contains(&va) {
                 Ok(())
             } else {
@@ -110,7 +110,7 @@ impl AsmAnalysis {
     }
 
     /// ensure basic block at `va` is being split
-    fn ensure_split(&mut self, metadata: &mut Metadata<'_>, va: usize) {
+    fn ensure_split(&mut self, metadata: &mut Metadata<'_>, va: u32) {
         if let Some(idx) = metadata
             .blocks
             .iter()
@@ -139,7 +139,7 @@ impl AsmAnalysis {
 
     /// add `va` to the internal queue with `mode`
     #[instrument(skip(self, metadata), fields(va = format_args!("{:#x}", va)), level = "trace")]
-    pub fn enqueue_va(&mut self, metadata: &mut Metadata<'_>, va: usize, mode: CpuMode) {
+    pub fn enqueue_va(&mut self, metadata: &mut Metadata<'_>, va: u32, mode: CpuMode) {
         // is there a block which has `va` as start?
         if metadata.blocks.iter().any(|b| b.start_va() == va) {
             // then everything is done
@@ -163,7 +163,7 @@ impl AsmAnalysis {
     fn process_va_block(
         &mut self,
         metadata: &mut Metadata<'_>,
-        start_va: usize,
+        start_va: u32,
         mode: CpuMode,
     ) -> Result<Vec<Code>> {
         let mut bin: Vec<Code> = Vec::with_capacity(50);
@@ -182,28 +182,31 @@ impl AsmAnalysis {
                 break;
             }
 
-            let offset = va.wrapping_sub(metadata.base_address);
-            if offset >= metadata.data.len() {
-                warn!("{va:#x} out of bounds, abort analysis for the {start_va:#x} entry");
-                metadata.branch.discard(va);
-
-                // also drop caller who queued this instruction
-                let mut iter = metadata.branch.all_for(va);
-                if let Some(va) = iter.next() {
-                    debug!("drop caller at {va:#x}");
-                    let die = iter.next().is_some();
-                    drop(iter);
-
+            let offset = va.wrapping_sub(metadata.base_address) as usize;
+            let data = match metadata.data.get(offset..offset + 4) {
+                Some(data) => data,
+                None => {
+                    warn!("{va:#x} out of bounds, abort analysis for the {start_va:#x} entry");
                     metadata.branch.discard(va);
 
-                    if die {
-                        todo!("more than one invalid caller for {va:#x}. the CFG is really broken");
-                    }
-                }
-                break;
-            }
+                    // also drop caller who queued this instruction
+                    let mut iter = metadata.branch.all_for(va);
+                    if let Some(va) = iter.next() {
+                        debug!("drop caller at {va:#x}");
+                        let die = iter.next().is_some();
+                        drop(iter);
 
-            let data = &metadata.data[offset..offset + 4];
+                        metadata.branch.discard(va);
+
+                        if die {
+                            todo!(
+                                "more than one invalid caller for {va:#x}. the CFG is really broken"
+                            );
+                        }
+                    }
+                    break;
+                }
+            };
 
             let code = match Self::disassemble_oneshot(data, mode) {
                 Ok(mut code) => {
@@ -238,7 +241,7 @@ impl AsmAnalysis {
             );
 
             last_va = va;
-            let next_va = va + code.instruction.len().to_const() as usize;
+            let next_va = va + code.instruction.len().to_const();
 
             // this is awful, but clone is even worse, right?
             let mut stop = false;
@@ -336,18 +339,18 @@ impl AsmAnalysis {
                         let mut load = pc.wrapping_sub(metadata.base_address);
 
                         load = if up {
-                            load.wrapping_add(imm as usize)
+                            load.wrapping_add(imm as u32)
                         } else {
-                            load.wrapping_sub(imm as usize)
+                            load.wrapping_sub(imm as u32)
                         };
 
                         if let Some(reg_val) =
-                            a32_ldr_data(&metadata.data[load..], code.instruction.opcode)
+                            a32_ldr_data(&metadata.data[load as usize..], code.instruction.opcode)
                         {
                             // jump
                             if rt.is_pc() && imm == { if mode == CpuMode::Arm { 4 } else { 0 } } {
                                 if reg_val >= metadata.base_address
-                                    && reg_val < metadata.base_address + metadata.data.len()
+                                    && reg_val < metadata.base_address + metadata.data.len() as u32
                                 {
                                     let next_mode = CpuMode::from_code_and_va(&code, reg_val);
                                     let next_va = mode.align_va_on_switch(&next_mode, reg_val);
@@ -369,7 +372,7 @@ impl AsmAnalysis {
                 }
                 Opcode::ADR => {
                     if let Operand::Imm32(imm) = code.instruction.operands[1] {
-                        let addr = code.va().wrapping_add(imm as usize);
+                        let addr = code.va().wrapping_add(imm as u32);
                         metadata.refs.insert(code.va, addr);
                         trace!("add {addr:#x} to data refs");
                     } else {
@@ -409,20 +412,20 @@ impl AsmAnalysis {
                         // literal pool address, already stored by LDR
                         let ldr_pool_addr =
                             *metadata.refs.get(&ldr.va).expect("LDR entry must exist");
-                        let ldr_pool_off = ldr_pool_addr - metadata.base_address;
+                        let ldr_pool_off = (ldr_pool_addr - metadata.base_address) as usize;
                         // literal pool **value**
                         let ldr_va = i32::from_le_bytes(
                             metadata.data[ldr_pool_off..ldr_pool_off + 4]
                                 .try_into()
                                 .unwrap(),
-                        ) as isize;
+                        );
 
                         debug!("LDR pool address: {ldr_pool_addr:#x}");
                         debug!("LDR pool value: {ldr_va:#x}");
                         let ldr_va = ldr_va.wrapping_add_unsigned(code.pc());
 
                         // add new entry because data referenced by the LDR is a literal itself
-                        metadata.refs.insert(code.va, ldr_va as usize);
+                        metadata.refs.insert(code.va, ldr_va as u32);
                         debug!("ADD value: {ldr_va:#x}");
                     }
                 }
@@ -518,18 +521,18 @@ impl AsmAnalysis {
 
     /// map branch immediate value to VA
     #[inline(always)]
-    fn branch_map_imm(code: &Code, operand: Operand) -> Option<usize> {
+    fn branch_map_imm(code: &Code, operand: Operand) -> Option<u32> {
         let target = match operand {
             Operand::BranchOffset(target) | Operand::BranchThumbOffset(target) => target,
             Operand::Reg(_) => return None,
             _ => unreachable!(),
         };
-        Some(code.pc().wrapping_add_signed(target as isize))
+        Some(code.pc().wrapping_add_signed(target as i32))
     }
 
     /// check if VA is aligned
     #[inline(always)]
-    fn sanity_check_va_align(va: usize) -> Result<()> {
+    fn sanity_check_va_align(va: u32) -> Result<()> {
         if va & 1 == 0 {
             Ok(())
         } else {
