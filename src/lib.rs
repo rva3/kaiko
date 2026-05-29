@@ -84,6 +84,7 @@ pub struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
+    #[must_use]
     pub fn try_new(
         data: &'a [u8],
         base_address: u32,
@@ -158,18 +159,21 @@ impl<'a> Analyzer<'a> {
     }
 
     /// read a raw byte slice from a VA
+    #[must_use]
     pub fn read_bytes(&self, va: u32, len: u32) -> Option<&[u8]> {
         let offset = self.unmap_va(va)?;
         self.data.get(offset..offset + len as usize)
     }
 
     /// read LE u32
+    #[must_use]
     pub fn read_u32(&self, va: u32) -> Option<u32> {
         let bytes = self.read_bytes(va, 4)?;
         Some(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     /// read a null-terminated C string
+    #[must_use]
     pub fn read_cstr(&self, va: u32) -> Option<&str> {
         let offset = self.unmap_va(va)?;
         let slice = &self.data[offset..];
@@ -178,10 +182,12 @@ impl<'a> Analyzer<'a> {
     }
 
     /// all instructions
+    #[must_use]
     pub fn code(&self) -> impl Iterator<Item = &Code> {
         self.functions().map(|f| f.code()).flatten()
     }
 
+    #[must_use]
     pub fn blocks(&self) -> impl Iterator<Item = BasicBlockView<'_>> {
         self.metadata
             .blocks
@@ -190,6 +196,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// all functions
+    #[must_use]
     pub fn functions(&self) -> impl Iterator<Item = FunctionView<'_>> {
         self.metadata
             .fns
@@ -198,16 +205,19 @@ impl<'a> Analyzer<'a> {
     }
 
     /// get function which has `va`
+    #[must_use]
     pub fn fn_by_va(&self, va: u32) -> Option<FunctionView<'_>> {
         self.functions().find(|f| f.contains_va(va))
     }
 
     /// get basic block which has `va`
+    #[must_use]
     pub fn block_by_va(&self, va: u32) -> Option<BasicBlockView<'_>> {
         self.blocks().find(|b| b.contains_va(va))
     }
 
     /// get functions which reference `s`
+    #[must_use]
     pub fn fns_by_str(&self, s: &str) -> Option<impl Iterator<Item = FunctionView<'_>>> {
         let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
         Some(
@@ -221,6 +231,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// get blocks which reference `s`
+    #[must_use]
     pub fn blocks_by_str(&self, s: &str) -> Option<impl Iterator<Item = BasicBlockView<'_>>> {
         let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
         Some(
@@ -234,6 +245,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// get instructions which reference `s`
+    #[must_use]
     pub fn instructions_by_str(&self, s: &str) -> Option<impl Iterator<Item = &Code>> {
         let data_va = self.map_va(memmem::find(&self.data, s.as_bytes())?)? as u32;
         Some(
@@ -247,16 +259,19 @@ impl<'a> Analyzer<'a> {
     }
 
     /// like `fns_by_str` but only for the first function
+    #[must_use]
     pub fn fn_by_str(&self, s: &str) -> Option<FunctionView<'_>> {
         self.fns_by_str(s).map(|mut iter| iter.next()).flatten()
     }
 
     /// like `blocks_by_str` but only for the first block
+    #[must_use]
     pub fn block_by_str(&self, s: &str) -> Option<BasicBlockView<'_>> {
         self.blocks_by_str(s).map(|mut iter| iter.next()).flatten()
     }
 
     /// like `instruction_by_str` but only for the first instruction
+    #[must_use]
     pub fn instruction_by_str(&self, s: &str) -> Option<&Code> {
         self.instructions_by_str(s)
             .map(|mut iter| iter.next())
@@ -264,6 +279,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// get function by the basic block
+    #[must_use]
     pub fn fn_by_block(&self, block: &BasicBlockView<'_>) -> FunctionView<'_> {
         self.functions()
             .find(|f| f.blocks().any(|b| b.start_va() == block.start_va()))
@@ -273,6 +289,7 @@ impl<'a> Analyzer<'a> {
     /// map raw `offset` to VA
     ///
     /// `None` if `offset` cannot be mapped (bigger than max binary size)
+    #[must_use]
     pub fn map_va(&self, offset: usize) -> Option<u32> {
         let offset = offset as u32;
         if offset < self.base_address && offset < self.base_address + self.data.len() as u32 {
@@ -285,6 +302,7 @@ impl<'a> Analyzer<'a> {
     /// unmap `va` to raw offset
     ///
     /// `None` if `va` cannot be unmapped (out of bounds of `[base_addr; base_addr + data.len())`)
+    #[must_use]
     pub fn unmap_va(&self, va: u32) -> Option<usize> {
         if va >= self.base_address && va < self.base_address + self.data.len() as u32 {
             Some((va - self.base_address) as usize)
