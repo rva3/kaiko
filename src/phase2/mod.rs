@@ -20,9 +20,9 @@ pub(crate) mod fn_analysis;
 
 #[derive(Debug)]
 pub struct Metadata<'a> {
-    data: &'a [u8],
+    pub data: &'a [u8],
     /// binary base address
-    base_address: u32,
+    pub base_address: u32,
     /// all disassembled instructions
     pub bin: BTreeMap<u32, Code>,
     /// all basic blocks
