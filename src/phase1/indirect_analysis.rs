@@ -19,7 +19,7 @@ impl IndirectAnalysis {
     /// this is similar to `process_va_block`, but instead of raw instructions,
     /// the branch analysis metadata is used
     #[instrument(skip(self, metadata), level = "trace")]
-    pub fn resolve_register_state(&mut self, metadata: &mut Metadata<'_>) -> Vec<(u32, CpuMode)> {
+    pub fn resolve_register_state(&mut self, metadata: &mut Metadata) -> Vec<(u32, CpuMode)> {
         let mut new_jumps = Vec::new();
 
         // all blocks go into queue
@@ -41,12 +41,12 @@ impl IndirectAnalysis {
             for (va, code) in metadata.bin.range(range.clone()) {
                 trace!("at {code}");
 
-                rwt.step(code, metadata.data, metadata.base_address);
+                rwt.step(code, &metadata.data, metadata.base_address);
 
                 if let Some(JumpType::IndirectCall(r) | JumpType::IndirectJump(r)) =
                     metadata.branch.get_callee(*va)
                 {
-                    if let Some(value) = rwt.try_get_imm(*r, metadata.base_address, metadata.data)
+                    if let Some(value) = rwt.try_get_imm(*r, metadata.base_address, &metadata.data)
                         && let Some(value) = metadata.map_va(value)
                     {
                         debug!("solved indirection: r{} -> {value:#x}", r.number());

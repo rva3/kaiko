@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::RangeInclusive,
+    sync::Arc,
 };
 
 use yaxpeax_arm::armv7::Reg;
@@ -19,8 +20,8 @@ use crate::{
 pub(crate) mod fn_analysis;
 
 #[derive(Debug)]
-pub struct Metadata<'a> {
-    pub data: &'a [u8],
+pub struct Metadata {
+    pub data: Arc<Vec<u8>>,
     /// binary base address
     pub base_address: u32,
     /// all disassembled instructions
@@ -35,18 +36,18 @@ pub struct Metadata<'a> {
     branch: BranchAnalysis,
 }
 
-impl PartialEq for Metadata<'_> {
+impl PartialEq for Metadata {
     // there's only one metadata instance
     fn eq(&self, _other: &Self) -> bool {
         true
     }
 }
 
-impl Eq for Metadata<'_> {}
+impl Eq for Metadata {}
 
-impl<'a> Metadata<'a> {
+impl Metadata {
     pub fn new(
-        data: &'a [u8],
+        data: Arc<Vec<u8>>,
         base_address: u32,
         bin: BTreeMap<u32, Code>,
         blocks: Vec<BasicBlock>,
@@ -128,7 +129,7 @@ impl BasicBlock {
 #[derive(Debug, PartialEq, Eq)]
 pub struct BasicBlockView<'a> {
     /// global metadata
-    metadata: &'a Metadata<'a>,
+    metadata: &'a Metadata,
     /// block ref
     block: &'a BasicBlock,
 }
@@ -226,7 +227,7 @@ impl Function {
 #[derive(Debug, PartialEq, Eq)]
 pub struct FunctionView<'a> {
     /// global metadata
-    metadata: &'a Metadata<'a>,
+    metadata: &'a Metadata,
     /// fn ref
     f: &'a Function,
 }
@@ -303,7 +304,7 @@ impl<'a> FunctionView<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct RegisterView<'a> {
     /// global metadata
-    metadata: &'a Metadata<'a>,
+    metadata: &'a Metadata,
     /// rwt ref
     rwt: &'a RegWriteTracker,
 }
@@ -337,7 +338,7 @@ impl<'a> RegisterView<'a> {
                 return Some(rwt.snapshot());
             }
 
-            rwt.step(code, self.metadata.data, self.metadata.base_address);
+            rwt.step(code, &self.metadata.data, self.metadata.base_address);
         }
 
         None
@@ -354,7 +355,7 @@ impl<'a> RegisterView<'a> {
 
         // clone is very cheap here
         for (v, code) in self.metadata.bin.range(block.range.clone()) {
-            rwt.step(code, self.metadata.data, self.metadata.base_address);
+            rwt.step(code, &self.metadata.data, self.metadata.base_address);
 
             if *v == va {
                 return Some(rwt.snapshot());
@@ -379,7 +380,7 @@ impl<'a> RegisterView<'a> {
                 return Some(rwt.get(r));
             }
 
-            rwt.step(code, self.metadata.data, self.metadata.base_address);
+            rwt.step(code, &self.metadata.data, self.metadata.base_address);
         }
 
         None
@@ -396,7 +397,7 @@ impl<'a> RegisterView<'a> {
 
         // clone is very cheap here
         for (v, code) in self.metadata.bin.range(block.range.clone()) {
-            rwt.step(code, self.metadata.data, self.metadata.base_address);
+            rwt.step(code, &self.metadata.data, self.metadata.base_address);
 
             if *v == va {
                 return Some(rwt.get(r));
@@ -412,7 +413,7 @@ impl<'a> RegisterView<'a> {
         rwt.try_get_imm(
             Reg::from_u8(r),
             self.metadata.base_address,
-            self.metadata.data,
+            &self.metadata.data,
         )
     }
 }

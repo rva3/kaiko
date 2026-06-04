@@ -2,6 +2,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     ops::RangeInclusive,
+    sync::Arc,
 };
 use tracing::{instrument, warn};
 
@@ -22,9 +23,9 @@ pub(crate) mod indirect_fn_analysis;
 pub(crate) mod reg_analysis;
 
 /// phase 1 metadata for disassembling instructions
-pub struct Metadata<'a> {
+pub struct Metadata {
     /// binary content
-    data: &'a [u8],
+    data: Arc<Vec<u8>>,
     /// binary base address
     base_address: u32,
 
@@ -39,8 +40,8 @@ pub struct Metadata<'a> {
     pub refs: HashMap<u32, u32>,
 }
 
-impl<'a> Metadata<'a> {
-    pub fn new(data: &'a [u8], base_address: u32) -> Self {
+impl Metadata {
+    pub fn new(data: Arc<Vec<u8>>, base_address: u32) -> Self {
         Self {
             data,
             base_address,
@@ -75,7 +76,7 @@ impl<'a> Metadata<'a> {
         }
     }
 
-    pub fn into_2nd(self) -> P2Metadata<'a> {
+    pub fn into_2nd(self) -> P2Metadata {
         let mut blocks = self
             .blocks
             .into_iter()

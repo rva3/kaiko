@@ -33,7 +33,7 @@ impl AsmAnalysis {
     }
 
     #[cfg(not(feature = "unchecked"))]
-    pub fn self_test(&self, metadata: &Metadata<'_>) -> Result<()> {
+    pub fn self_test(&self, metadata: &Metadata) -> Result<()> {
         use crate::{err::Phase1SelfTestError, phase1::branch_analysis::JumpType};
         use std::collections::HashSet;
 
@@ -109,7 +109,7 @@ impl AsmAnalysis {
     }
 
     /// ensure basic block at `va` is being split
-    fn ensure_split(&self, metadata: &mut Metadata<'_>, va: u32) {
+    fn ensure_split(&self, metadata: &mut Metadata, va: u32) {
         if let Some(idx) = metadata
             .blocks
             .iter()
@@ -138,7 +138,7 @@ impl AsmAnalysis {
 
     /// add `va` to the internal queue with `mode`
     #[instrument(skip(self, metadata), fields(va = format_args!("{:#x}", va)), level = "trace")]
-    pub fn enqueue_va(&mut self, metadata: &mut Metadata<'_>, va: u32, mode: CpuMode) {
+    pub fn enqueue_va(&mut self, metadata: &mut Metadata, va: u32, mode: CpuMode) {
         // is there a block which has `va` as start?
         if metadata.blocks.iter().any(|b| b.start_va() == va) {
             // then everything is done
@@ -161,7 +161,7 @@ impl AsmAnalysis {
     #[instrument(skip(self, metadata), fields(start_va = format_args!("{:#x}", start_va)), level = "trace")]
     fn process_va_block(
         &mut self,
-        metadata: &mut Metadata<'_>,
+        metadata: &mut Metadata,
         start_va: u32,
         mode: CpuMode,
     ) -> Result<Vec<Code>> {
@@ -448,7 +448,7 @@ impl AsmAnalysis {
 
     /// process `self.queue`
     #[instrument(skip(self, metadata), level = "trace")]
-    pub fn process_queue(&mut self, metadata: &mut Metadata<'_>) -> Result<()> {
+    pub fn process_queue(&mut self, metadata: &mut Metadata) -> Result<()> {
         while let Some((va, mode)) = self.queue.pop() {
             debug!("pop {va:#x} from queue ({mode:?} mode)");
             if metadata.bin.contains_key(&va) {

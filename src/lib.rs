@@ -1,6 +1,6 @@
 #![allow(clippy::inline_always)]
 
-use std::fmt::Display;
+use std::{fmt::Display, sync::Arc};
 
 use memchr::memmem;
 use tracing::{debug, info, warn};
@@ -77,13 +77,13 @@ impl Display for Code {
     }
 }
 
-pub struct Analyzer<'a> {
-    metadata: P2Metadata<'a>,
+pub struct Analyzer {
+    metadata: P2Metadata,
 }
 
-impl<'a> Analyzer<'a> {
+impl Analyzer {
     pub fn try_new(
-        data: &'a [u8],
+        data: Arc<Vec<u8>>,
         base_address: u32,
         entry_offset: u32,
         entry_mode: CpuMode,
@@ -209,7 +209,7 @@ impl<'a> Analyzer<'a> {
     /// get functions which reference `s`
     #[must_use]
     pub fn fns_by_str(&self, s: &str) -> Option<impl Iterator<Item = FunctionView<'_>>> {
-        let data_va = self.map_va(memmem::find(self.metadata.data, s.as_bytes())?)? as u32;
+        let data_va = self.map_va(memmem::find(&self.metadata.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
@@ -222,7 +222,7 @@ impl<'a> Analyzer<'a> {
     /// get blocks which reference `s`
     #[must_use]
     pub fn blocks_by_str(&self, s: &str) -> Option<impl Iterator<Item = BasicBlockView<'_>>> {
-        let data_va = self.map_va(memmem::find(self.metadata.data, s.as_bytes())?)? as u32;
+        let data_va = self.map_va(memmem::find(&self.metadata.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
@@ -235,7 +235,7 @@ impl<'a> Analyzer<'a> {
     /// get instructions which reference `s`
     #[must_use]
     pub fn instructions_by_str(&self, s: &str) -> Option<impl Iterator<Item = &Code>> {
-        let data_va = self.map_va(memmem::find(self.metadata.data, s.as_bytes())?)? as u32;
+        let data_va = self.map_va(memmem::find(&self.metadata.data, s.as_bytes())?)? as u32;
         Some(
             self.metadata
                 .refs
