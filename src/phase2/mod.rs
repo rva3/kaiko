@@ -11,7 +11,7 @@ use crate::{
     Code,
     cpu_mode::CpuMode,
     phase1::{
-        branch_analysis::BranchAnalysis,
+        branch_analysis::{BranchAnalysis, JumpType},
         reg_analysis::{RegWriteTracker, RegisterState, Value},
     },
 };
@@ -187,6 +187,15 @@ impl<'a> BasicBlockView<'a> {
                 .get(&c.va())
                 .map(|&target_va| (c, target_va))
         })
+    }
+
+    /// get (code, callee VA) in the current block (BL/BLX/B (tail calls))
+    pub fn fn_calls(&self) -> impl DoubleEndedIterator<Item = (&Code, u32)> {
+        self.code()
+            .filter_map(|c| match self.metadata.branch.get_callee(c.va) {
+                Some(JumpType::DirectCall(va)) => Some((c, *va)),
+                _ => None,
+            })
     }
 
     /// is the `va` in the block?
