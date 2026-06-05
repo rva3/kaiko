@@ -3,7 +3,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::RangeInclusive,
-    sync::Arc,
 };
 
 use yaxpeax_arm::armv7::Reg;
@@ -21,7 +20,7 @@ pub(crate) mod fn_analysis;
 
 #[derive(Debug)]
 pub struct Metadata {
-    pub data: Arc<Vec<u8>>,
+    pub data: Box<[u8]>,
     /// binary base address
     pub base_address: u32,
     /// all disassembled instructions
@@ -47,7 +46,7 @@ impl Eq for Metadata {}
 
 impl Metadata {
     pub fn new(
-        data: Arc<Vec<u8>>,
+        data: Box<[u8]>,
         base_address: u32,
         bin: BTreeMap<u32, Code>,
         blocks: Vec<BasicBlock>,

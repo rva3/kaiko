@@ -2,7 +2,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
     ops::RangeInclusive,
-    sync::Arc,
 };
 use tracing::{instrument, warn};
 
@@ -25,7 +24,7 @@ pub(crate) mod reg_analysis;
 /// phase 1 metadata for disassembling instructions
 pub struct Metadata {
     /// binary content
-    data: Arc<Vec<u8>>,
+    data: Box<[u8]>,
     /// binary base address
     base_address: u32,
 
@@ -41,7 +40,7 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub fn new(data: Arc<Vec<u8>>, base_address: u32) -> Self {
+    pub fn new(data: Box<[u8]>, base_address: u32) -> Self {
         Self {
             data,
             base_address,

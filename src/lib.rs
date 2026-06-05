@@ -1,6 +1,6 @@
 #![allow(clippy::inline_always)]
 
-use std::{fmt::Display, sync::Arc};
+use std::fmt::Display;
 
 use memchr::memmem;
 use tracing::{debug, info, warn};
@@ -83,7 +83,7 @@ pub struct Analyzer {
 
 impl Analyzer {
     pub fn try_new(
-        data: Arc<Vec<u8>>,
+        data: Box<[u8]>,
         base_address: u32,
         entry_offset: u32,
         entry_mode: CpuMode,
