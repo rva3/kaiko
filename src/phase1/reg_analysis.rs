@@ -89,37 +89,53 @@ impl RegWriteTracker {
     }
 
     pub fn try_get_imm(&self, reg: Reg, base_address: u32, data: &[u8]) -> Option<u32> {
-        match self.get(reg.number()) {
+        let mut visited = [false; 16];
+        self.try_get_imm_recursive(reg, base_address, data, &mut visited)
+    }
+
+    fn try_get_imm_recursive(
+        &self,
+        reg: Reg,
+        base_address: u32,
+        data: &[u8],
+        visited: &mut [bool; 16],
+    ) -> Option<u32> {
+        let r = reg.number() as usize;
+
+        if visited[r] {
+            trace!("cycle detected at r{}", r);
+            return None;
+        }
+
+        // lock
+        visited[r] = true;
+
+        let result = match self.get(reg.number()) {
             Value::Uninitialized | Value::Unknown => {
                 if reg.is_pc() {
-                    unreachable!("PC should not be unknown");
+                    unreachable!("PC should be known");
                 } else {
                     None
                 }
             }
             Value::Immediate(imm) => Some(imm),
-            Value::RegisterOffset { r, offset } => {
-                if r == reg {
-                    None
-                } else {
-                    self.try_get_imm(r, base_address, data)
-                        .map(|v| v.wrapping_add_signed(offset))
-                }
-            }
+            Value::RegisterOffset { r, offset } => self
+                .try_get_imm_recursive(r, base_address, data, visited)
+                .map(|v| v.wrapping_add_signed(offset)),
             Value::Deref { r, offset } => {
-                if r == reg {
-                    return None;
-                }
-
                 let ptr = self
-                    .try_get_imm(r, base_address, data)?
+                    .try_get_imm_recursive(r, base_address, data, visited)?
                     .wrapping_add_signed(offset);
 
                 let load = ptr.checked_sub(base_address)? as usize;
                 data.get(load..load + 4)
                     .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
             }
-        }
+        };
+
+        // unlock
+        visited[r] = false;
+        result
     }
 
     pub fn snapshot(&self) -> RegisterState {
@@ -171,34 +187,92 @@ impl RegWriteTracker {
                 self.call();
             }
             Opcode::LDR => {
-                if let Operand::Reg(rt) = code.instruction.operands[0]
-                    && let Operand::RegDerefPreindexOffset(reg, imm, up, _) =
-                        code.instruction.operands[1]
-                {
-                    let offset = if up { imm as i32 } else { -(imm as i32) };
-                    if reg.is_pc() {
-                        let align_pc = code.pc() & !3;
-                        let bin_offset = align_pc
-                            .wrapping_sub(base_address)
-                            .wrapping_add_signed(offset);
-                        trace!(
-                            "LDR: literal load at {code} for {bin_offset:#x} to {}",
-                            rt.number()
-                        );
-                        if let Some(val) =
-                            a32_ldr_data(&data[bin_offset as usize..], code.instruction.opcode)
-                        {
-                            self.immediate(rt.number(), val)
-                        } else {
-                            self.regs[rt.number() as usize] = Value::Unknown;
+                if let Operand::Reg(rt) = code.instruction.operands[0] {
+                    // for immediate
+                    let mut resolved_val: Option<u32> = None;
+                    // for deref
+                    let mut fallback_deref: Option<(Reg, i32)> = None;
+
+                    match code.instruction.operands[1] {
+                        // LDR Rt, [Rn, #imm]
+                        Operand::RegDerefPreindexOffset(reg, imm, up, _) => {
+                            let offset = if up { imm as i32 } else { -(imm as i32) };
+
+                            if reg.is_pc() {
+                                let align_pc = code.pc() & !3;
+                                let bin_offset = align_pc
+                                    .wrapping_sub(base_address)
+                                    .wrapping_add_signed(offset);
+                                trace!(
+                                    "LDR: literal load at {code} for {bin_offset:#x} to {}",
+                                    rt.number()
+                                );
+                                if let Some(val) = a32_ldr_data(
+                                    &data[bin_offset as usize..],
+                                    code.instruction.opcode,
+                                ) {
+                                    resolved_val = Some(val);
+                                }
+                            } else {
+                                if let Some(base_imm) = self.try_get_imm(reg, base_address, data) {
+                                    let ptr = base_imm.wrapping_add_signed(offset);
+                                    if let Some(load_idx) = ptr.checked_sub(base_address) {
+                                        if let Some(bytes) =
+                                            data.get(load_idx as usize..load_idx as usize + 4)
+                                        {
+                                            resolved_val =
+                                                Some(u32::from_le_bytes(bytes.try_into().unwrap()));
+                                        }
+                                    }
+                                }
+
+                                if resolved_val.is_none() && rt != reg {
+                                    fallback_deref = Some((reg, offset));
+                                }
+                            }
                         }
-                    } else {
-                        trace!(
-                            "LDR: deref of {} at {offset:#x} to {}",
-                            reg.number(),
-                            rt.number()
-                        );
+                        // LDR Rt, [Rn, Rm]
+                        Operand::RegDerefPreindexReg(reg, rm, up, _) => {
+                            if let (Some(base_imm), Some(index_imm)) = (
+                                self.try_get_imm(reg, base_address, data),
+                                self.try_get_imm(rm, base_address, data),
+                            ) {
+                                let offset = if up {
+                                    index_imm as i32
+                                } else {
+                                    -(index_imm as i32)
+                                };
+                                let ptr = base_imm.wrapping_add_signed(offset);
+                                if let Some(load_idx) = ptr.checked_sub(base_address) {
+                                    if let Some(bytes) =
+                                        data.get(load_idx as usize..load_idx as usize + 4)
+                                    {
+                                        resolved_val =
+                                            Some(u32::from_le_bytes(bytes.try_into().unwrap()));
+                                    }
+                                }
+                            }
+
+                            if resolved_val.is_none() && rt != reg {
+                                if let Some(index_imm) = self.try_get_imm(rm, base_address, data) {
+                                    let offset = if up {
+                                        index_imm as i32
+                                    } else {
+                                        -(index_imm as i32)
+                                    };
+                                    fallback_deref = Some((reg, offset));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    if let Some(val) = resolved_val {
+                        self.immediate(rt.number(), val);
+                    } else if let Some((reg, offset)) = fallback_deref {
                         self.deref(rt.number(), reg, offset);
+                    } else {
+                        self.regs[rt.number() as usize] = Value::Unknown;
                     }
                 }
             }
