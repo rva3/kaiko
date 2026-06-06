@@ -75,6 +75,25 @@ impl Metadata {
             branch,
         }
     }
+
+    /// prepare metadata for read-only state
+    pub fn finalize(&mut self) {
+        self.blocks.shrink_to_fit();
+        self.blocks.iter_mut().for_each(|b| {
+            b.predecessors.shrink_to_fit();
+            b.successors.shrink_to_fit();
+        });
+
+        self.fns.shrink_to_fit();
+        self.fns.iter_mut().for_each(|f| f.blocks.shrink_to_fit());
+
+        self.refs.shrink_to_fit();
+
+        self.rev_refs.shrink_to_fit();
+        self.rev_refs.values_mut().for_each(|v| v.shrink_to_fit());
+
+        self.branch.jumps.shrink_to_fit();
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

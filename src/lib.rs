@@ -148,6 +148,8 @@ impl Analyzer {
             metadata.bin.len()
         );
 
+        metadata.finalize();
+
         Ok(Self { metadata })
     }
 
