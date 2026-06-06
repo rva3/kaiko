@@ -1,6 +1,6 @@
 //! disassemble as much as possible instructions and create basic blocks
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     ops::RangeInclusive,
 };
 use tracing::{instrument, warn};
@@ -35,6 +35,8 @@ pub struct Metadata {
     /// branch metadata
     pub branch: BranchAnalysis,
 
+    /// ldr literal pools
+    pub slots: HashSet<u32>,
     /// literals usage, mapped as <code va, literal va>
     pub refs: HashMap<u32, u32>,
 }
@@ -47,6 +49,7 @@ impl Metadata {
             bin: BTreeMap::new(),
             blocks: Vec::new(),
             branch: BranchAnalysis::new(),
+            slots: HashSet::new(),
             refs: HashMap::new(),
         }
     }

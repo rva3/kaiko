@@ -224,8 +224,11 @@ impl AsmAnalysis {
             };
 
             // stop on literals
-            if va != start_va && metadata.refs.values().any(|&literal_va| va == literal_va) {
-                debug!("fell into literal pool/data ref at {va:#x}, aborting linear execution");
+            if va != start_va
+                && (metadata.slots.contains(&va)
+                    || metadata.refs.values().any(|&literal_va| va == literal_va))
+            {
+                debug!("fell into literal pool/data ref at {va:#x}, stop");
                 break;
             }
 
@@ -358,8 +361,12 @@ impl AsmAnalysis {
 
                                 stop = true;
                             } else {
-                                metadata.refs.insert(code.va, load + metadata.base_address);
-                                trace!("add {load:#x} to data refs");
+                                // XXX (low priority): slots ideally should track jumps too,
+                                // but this would trigger the check
+                                metadata.slots.insert(load + metadata.base_address);
+                                metadata.refs.insert(code.va, reg_val);
+                                trace!("add slot {:#x}", load + metadata.base_address);
+                                trace!("add {reg_val:#x} value for {va:#x}");
                             }
                         }
                     }
@@ -403,20 +410,14 @@ impl AsmAnalysis {
                             ldr.va, code.va
                         );
 
-                        // literal pool address, already stored by LDR
-                        let ldr_pool_addr =
-                            *metadata.refs.get(&ldr.va).expect("LDR entry must exist");
-                        let ldr_pool_off = (ldr_pool_addr - metadata.base_address) as usize;
-                        // literal pool **value**
-                        let ldr_va = i32::from_le_bytes(
-                            metadata.data[ldr_pool_off..ldr_pool_off + 4]
-                                .try_into()
-                                .unwrap(),
-                        );
+                        // literal pool value
+                        let ldr_val =
+                            *metadata.refs.get(&ldr.va).expect("LDR entry must exist") as i32;
+                        debug!("LDR pool value: {ldr_val:#x}");
+                        let ldr_va = ldr_val.wrapping_add_unsigned(code.pc());
 
-                        debug!("LDR pool address: {ldr_pool_addr:#x}");
-                        debug!("LDR pool value: {ldr_va:#x}");
-                        let ldr_va = ldr_va.wrapping_add_unsigned(code.pc());
+                        // fix LDR value
+                        metadata.refs.insert(ldr.va, ldr_val as u32);
 
                         // add new entry because data referenced by the LDR is a literal itself
                         metadata.refs.insert(code.va, ldr_va as u32);
