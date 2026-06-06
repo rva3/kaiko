@@ -187,6 +187,7 @@ dependencies = [
  "clap",
  "clap-num",
  "memchr",
+ "smallvec",
  "thiserror",
  "tracing",
  "tracing-subscriber",

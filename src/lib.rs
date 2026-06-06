@@ -206,61 +206,54 @@ impl Analyzer {
         self.blocks().find(|b| b.contains_va(va))
     }
 
+    /// because there are orphan strings which break stuff
+    fn str_iter(&self, s: &str) -> impl Iterator<Item = u32> {
+        memmem::find_iter(&self.metadata.data, s).filter_map(|off| self.map_va(off))
+    }
+
     /// get functions which reference `s`
     #[must_use]
-    pub fn fns_by_str(&self, s: &str) -> Option<impl Iterator<Item = FunctionView<'_>>> {
-        let data_va = self.map_va(memmem::find(&self.metadata.data, s.as_bytes())?)? as u32;
-        Some(
-            self.metadata
-                .refs
-                .iter()
-                .filter(move |(_, known_data_va)| data_va == **known_data_va)
-                .filter_map(|(&code_va, _)| self.fn_by_va(code_va)),
-        )
+    pub fn fns_by_str(&self, s: &str) -> impl Iterator<Item = FunctionView<'_>> {
+        self.str_iter(s)
+            .filter_map(|data_va| self.metadata.rev_refs.get(&data_va))
+            .flat_map(|code_vas| code_vas)
+            .filter_map(|&code_va| self.fn_by_va(code_va))
     }
 
     /// get blocks which reference `s`
     #[must_use]
-    pub fn blocks_by_str(&self, s: &str) -> Option<impl Iterator<Item = BasicBlockView<'_>>> {
-        let data_va = self.map_va(memmem::find(&self.metadata.data, s.as_bytes())?)? as u32;
-        Some(
-            self.metadata
-                .refs
-                .iter()
-                .filter(move |(_, known_data_va)| data_va == **known_data_va)
-                .filter_map(|(&code_va, _)| self.block_by_va(code_va)),
-        )
+    pub fn blocks_by_str(&self, s: &str) -> impl Iterator<Item = BasicBlockView<'_>> {
+        self.str_iter(s)
+            .filter_map(|data_va| self.metadata.rev_refs.get(&data_va))
+            .flat_map(|code_vas| code_vas)
+            .filter_map(|&code_va| self.block_by_va(code_va))
     }
 
     /// get instructions which reference `s`
     #[must_use]
-    pub fn instructions_by_str(&self, s: &str) -> Option<impl Iterator<Item = &Code>> {
-        let data_va = self.map_va(memmem::find(&self.metadata.data, s.as_bytes())?)? as u32;
-        Some(
-            self.metadata
-                .refs
-                .iter()
-                .filter(move |(_, known_data_va)| data_va == **known_data_va)
-                .filter_map(|(code_va, _)| self.metadata.bin.get(code_va)),
-        )
+    pub fn instructions_by_str(&self, s: &str) -> impl Iterator<Item = &Code> {
+        self.str_iter(s)
+            .filter_map(|data_va| self.metadata.rev_refs.get(&data_va))
+            .flat_map(|code_vas| code_vas)
+            .filter_map(|code_va| self.metadata.bin.get(code_va))
     }
 
     /// like `fns_by_str` but only for the first function
     #[must_use]
     pub fn fn_by_str(&self, s: &str) -> Option<FunctionView<'_>> {
-        self.fns_by_str(s).and_then(|mut iter| iter.next())
+        self.fns_by_str(s).next()
     }
 
     /// like `blocks_by_str` but only for the first block
     #[must_use]
     pub fn block_by_str(&self, s: &str) -> Option<BasicBlockView<'_>> {
-        self.blocks_by_str(s).and_then(|mut iter| iter.next())
+        self.blocks_by_str(s).next()
     }
 
     /// like `instruction_by_str` but only for the first instruction
     #[must_use]
     pub fn instruction_by_str(&self, s: &str) -> Option<&Code> {
-        self.instructions_by_str(s).and_then(|mut iter| iter.next())
+        self.instructions_by_str(s).next()
     }
 
     /// get function by the basic block

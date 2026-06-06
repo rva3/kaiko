@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use clap::Parser;
 use clap_num::maybe_hex;
 use kaiko::{Analyzer, cpu_mode::CpuMode};
-use tracing::{error, info};
+use tracing::info;
 
 #[derive(Parser)]
 struct Cli {
@@ -39,14 +39,10 @@ fn main() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     if let Some(s) = cli.s {
-        if let Some(fns) = analyzer.fns_by_str(&s) {
-            for f in fns {
-                info!("{f}");
-            }
-            info!("done");
-        } else {
-            error!("can't find string in the binary");
+        for f in analyzer.fns_by_str(&s) {
+            info!("{f}");
         }
+        info!("done");
     }
 
     Ok(())

@@ -5,6 +5,7 @@ use std::{
     ops::RangeInclusive,
 };
 
+use smallvec::SmallVec;
 use yaxpeax_arm::armv7::Reg;
 
 use crate::{
@@ -29,8 +30,10 @@ pub struct Metadata {
     pub blocks: Vec<BasicBlock>,
     /// all functions
     pub fns: Vec<Function>,
-    /// all data references
+    /// all data references: <code va, data va>
     pub refs: HashMap<u32, u32>,
+    /// reverse data references: <data va, Vec<code va>>
+    pub rev_refs: HashMap<u32, SmallVec<[u32; 4]>>,
     /// branch data
     branch: BranchAnalysis,
 }
@@ -53,6 +56,14 @@ impl Metadata {
         refs: HashMap<u32, u32>,
         branch: BranchAnalysis,
     ) -> Self {
+        let mut rev_refs: HashMap<u32, SmallVec<[u32; 4]>> = HashMap::new();
+        for (&code_va, &data_va) in &refs {
+            rev_refs.entry(data_va).or_default().push(code_va);
+        }
+        for code_vas in rev_refs.values_mut() {
+            code_vas.sort();
+        }
+
         Self {
             data,
             base_address,
@@ -60,6 +71,7 @@ impl Metadata {
             blocks,
             fns: Vec::new(),
             refs,
+            rev_refs,
             branch,
         }
     }
