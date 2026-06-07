@@ -90,6 +90,7 @@ impl Metadata {
         self.rev_refs.values_mut().for_each(|v| v.shrink_to_fit());
 
         self.branch.jumps.shrink_to_fit();
+        self.branch.rev_jumps.shrink_to_fit();
     }
 }
 

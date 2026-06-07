@@ -1,4 +1,5 @@
 use ahash::AHashMap;
+use smallvec::SmallVec;
 use tracing::instrument;
 use yaxpeax_arm::armv7::Reg;
 
@@ -16,16 +17,26 @@ pub enum JumpType {
     Branch { target: u32, fallthrough: u32 },
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum EdgeType {
+    Call,
+    Jump,
+    Branch,
+}
+
 #[derive(Debug)]
 pub struct BranchAnalysis {
-    /// caller -> callee (even though it's not always call, but we're not going to use something like jumper and jumpee, right?)
+    /// <caller, callee> (even though it's not always call, but we're not going to use something like jumper and jumpee, right?)
     pub jumps: AHashMap<u32, JumpType>,
+    /// <callee, Vec<callers>>
+    pub rev_jumps: AHashMap<u32, SmallVec<[(u32, EdgeType); 4]>>,
 }
 
 impl BranchAnalysis {
     pub fn new() -> Self {
         Self {
             jumps: AHashMap::new(),
+            rev_jumps: AHashMap::new(),
         }
     }
 
@@ -33,6 +44,10 @@ impl BranchAnalysis {
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target)), level = "trace")]
     pub fn mark_as_direct_call(&mut self, me: u32, target: u32) {
         self.jumps.insert(me, JumpType::DirectCall(target));
+        self.rev_jumps
+            .entry(target)
+            .or_default()
+            .push((me, EdgeType::Call));
     }
 
     /// mark `target` as function call with `me` as caller VA
@@ -45,6 +60,10 @@ impl BranchAnalysis {
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target)), level = "trace")]
     pub fn mark_as_direct_jump(&mut self, me: u32, target: u32) {
         self.jumps.insert(me, JumpType::DirectJump(target));
+        self.rev_jumps
+            .entry(target)
+            .or_default()
+            .push((me, EdgeType::Jump));
     }
 
     /// mark `target` as indirect jump with `me` as jump instruction VA
@@ -63,6 +82,14 @@ impl BranchAnalysis {
                 fallthrough,
             },
         );
+        self.rev_jumps
+            .entry(target)
+            .or_default()
+            .push((me, EdgeType::Branch));
+        self.rev_jumps
+            .entry(fallthrough)
+            .or_default()
+            .push((me, EdgeType::Branch));
     }
 
     /// is `va` a function?
@@ -70,10 +97,10 @@ impl BranchAnalysis {
     /// if it's a function, then at least one `JumpType::DirectCall` should point to it
     #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
     pub fn is_fn(&self, va: u32) -> bool {
-        self.jumps.values().any(|ty| match ty {
-            JumpType::DirectCall(v) => va == *v,
-            _ => false,
-        })
+        self.rev_jumps
+            .get(&va)
+            .map(|callers| callers.iter().any(|(_, ty)| *ty == EdgeType::Call))
+            .unwrap_or(false)
     }
 
     pub fn get_callee(&self, va: u32) -> Option<&JumpType> {
@@ -83,48 +110,43 @@ impl BranchAnalysis {
     /// get all jumps to the `va`, either it's a branch or jump
     #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
     pub fn all_jumps_for(&self, va: u32) -> impl Iterator<Item = u32> {
-        self.jumps
-            .iter()
-            .filter_map(move |(caller_va, ty)| match ty {
-                JumpType::DirectJump(v) => Some([(va == *v).then_some(*caller_va), None]),
-                JumpType::Branch {
-                    target,
-                    fallthrough,
-                } => Some([
-                    (va == *target).then_some(*caller_va),
-                    (va == *fallthrough).then_some(*caller_va),
-                ]),
-                _ => None,
-            })
-            .flatten()
-            .filter_map(|va| va)
+        self.rev_jumps
+            .get(&va)
+            .into_iter()
+            .flat_map(|callers| callers.iter())
+            .filter(|(_, ty)| matches!(ty, EdgeType::Jump | EdgeType::Branch))
+            .map(|(caller_va, _)| *caller_va)
     }
 
     /// get all jumps, branches and calls for the `va`
     #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
     pub fn all_for(&self, va: u32) -> impl Iterator<Item = u32> {
-        self.jumps
-            .iter()
-            .filter_map(move |(caller_va, ty)| match ty {
-                JumpType::DirectCall(v) | JumpType::DirectJump(v) => {
-                    Some([(va == *v).then_some(*caller_va), None])
-                }
-                JumpType::Branch {
-                    target,
-                    fallthrough,
-                } => Some([
-                    (va == *target).then_some(*caller_va),
-                    (va == *fallthrough).then_some(*caller_va),
-                ]),
-                _ => None,
-            })
-            .flatten()
-            .filter_map(|va| va)
+        self.rev_jumps
+            .get(&va)
+            .into_iter()
+            .flat_map(|callers| callers.iter())
+            .filter(|(_, ty)| matches!(ty, EdgeType::Call | EdgeType::Jump | EdgeType::Branch))
+            .map(|(caller_va, _)| *caller_va)
     }
 
     /// remove entry
     #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
     pub fn discard(&mut self, va: u32) {
-        self.jumps.remove_entry(&va);
+        if let Some(ty) = self.jumps.remove(&va) {
+            let targets = match ty {
+                JumpType::DirectCall(t) | JumpType::DirectJump(t) => [Some(t), None],
+                JumpType::Branch {
+                    target,
+                    fallthrough,
+                } => [Some(target), Some(fallthrough)],
+                _ => [None, None],
+            };
+
+            targets.iter().flatten().for_each(|t| {
+                if let Some(callers) = self.rev_jumps.get_mut(&t) {
+                    callers.retain(|(caller_va, _)| *caller_va != va);
+                }
+            });
+        }
     }
 }
