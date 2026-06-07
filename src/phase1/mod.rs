@@ -1,8 +1,6 @@
 //! disassemble as much as possible instructions and create basic blocks
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    ops::RangeInclusive,
-};
+use ahash::{AHashMap, AHashSet};
+use std::{collections::BTreeMap, ops::RangeInclusive};
 use tracing::{instrument, warn};
 
 use crate::{
@@ -36,9 +34,9 @@ pub struct Metadata {
     pub branch: BranchAnalysis,
 
     /// ldr literal pools
-    pub slots: HashSet<u32>,
+    pub slots: AHashSet<u32>,
     /// literals usage, mapped as <code va, literal va>
-    pub refs: HashMap<u32, u32>,
+    pub refs: AHashMap<u32, u32>,
 }
 
 impl Metadata {
@@ -49,8 +47,8 @@ impl Metadata {
             bin: BTreeMap::new(),
             blocks: Vec::new(),
             branch: BranchAnalysis::new(),
-            slots: HashSet::new(),
-            refs: HashMap::new(),
+            slots: AHashSet::new(),
+            refs: AHashMap::new(),
         }
     }
 

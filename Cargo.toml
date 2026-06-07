@@ -19,6 +19,7 @@ unchecked = []
 cli = ["clap", "clap-num", "tracing-subscriber"]
 
 [dependencies]
+ahash = "0.8.12"
 clap = { version = "4.6.1", features = ["derive"], optional = true }
 clap-num = { version = "1.2.0", optional = true }
 memchr = "2.8.0"
@@ -30,6 +31,8 @@ yaxpeax-arch = "0.3.2"
 yaxpeax-arm = { git = "https://github.com/rva3/yaxpeax-arm", branch = "stable-dnm", version = "0.4.0" }
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = true
 codegen-units = 1
+split-debuginfo = "packed"
+debug = true

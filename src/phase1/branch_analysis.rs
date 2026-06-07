@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use ahash::AHashMap;
 use tracing::instrument;
 use yaxpeax_arm::armv7::Reg;
 
@@ -20,13 +19,13 @@ pub enum JumpType {
 #[derive(Debug)]
 pub struct BranchAnalysis {
     /// caller -> callee (even though it's not always call, but we're not going to use something like jumper and jumpee, right?)
-    pub jumps: HashMap<u32, JumpType>,
+    pub jumps: AHashMap<u32, JumpType>,
 }
 
 impl BranchAnalysis {
     pub fn new() -> Self {
         Self {
-            jumps: HashMap::new(),
+            jumps: AHashMap::new(),
         }
     }
 

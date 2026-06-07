@@ -1,10 +1,7 @@
 //! cleanup data and convert to better structs for external crates
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt::Display,
-    ops::RangeInclusive,
-};
+use std::{collections::BTreeMap, fmt::Display, ops::RangeInclusive};
 
+use ahash::AHashMap;
 use smallvec::SmallVec;
 use yaxpeax_arm::armv7::Reg;
 
@@ -31,9 +28,9 @@ pub struct Metadata {
     /// all functions
     pub fns: Vec<Function>,
     /// all data references: <code va, data va>
-    pub refs: HashMap<u32, u32>,
+    pub refs: AHashMap<u32, u32>,
     /// reverse data references: <data va, Vec<code va>>
-    pub rev_refs: HashMap<u32, SmallVec<[u32; 4]>>,
+    pub rev_refs: AHashMap<u32, SmallVec<[u32; 4]>>,
     /// branch data
     branch: BranchAnalysis,
 }
@@ -53,10 +50,10 @@ impl Metadata {
         base_address: u32,
         bin: BTreeMap<u32, Code>,
         blocks: Vec<BasicBlock>,
-        refs: HashMap<u32, u32>,
+        refs: AHashMap<u32, u32>,
         branch: BranchAnalysis,
     ) -> Self {
-        let mut rev_refs: HashMap<u32, SmallVec<[u32; 4]>> = HashMap::new();
+        let mut rev_refs: AHashMap<u32, SmallVec<[u32; 4]>> = AHashMap::new();
         for (&code_va, &data_va) in &refs {
             rev_refs.entry(data_va).or_default().push(code_va);
         }
