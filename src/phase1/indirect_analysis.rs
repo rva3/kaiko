@@ -99,6 +99,7 @@ impl IndirectAnalysis {
                             if !qlookup.contains(&va) {
                                 debug!("state change propagated, queue {va:#x} again");
                                 self.queue.push(va);
+                                qlookup.insert(va);
                             }
                         }
                     }

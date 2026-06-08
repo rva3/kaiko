@@ -1,7 +1,5 @@
-use std::collections::HashSet;
-
 use crate::phase2::{Function, Metadata};
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use tracing::{debug, instrument, trace};
 
 pub struct FnAnalysis;
@@ -30,7 +28,7 @@ impl FnAnalysis {
 
             let mut fn_blocks = Vec::new();
             let mut queue = vec![i];
-            let mut visited = HashSet::new();
+            let mut visited = AHashSet::new();
 
             while let Some(current_idx) = queue.pop() {
                 if !visited.insert(current_idx) {

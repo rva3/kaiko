@@ -35,7 +35,7 @@ impl AsmAnalysis {
     #[cfg(not(feature = "unchecked"))]
     pub fn self_test(&self, metadata: &Metadata) -> Result<()> {
         use crate::{err::Phase1SelfTestError, phase1::branch_analysis::JumpType};
-        use std::collections::HashSet;
+        use ahash::AHashSet;
 
         // all blocks must have start <= end
         for b in metadata.blocks.values() {
@@ -49,7 +49,7 @@ impl AsmAnalysis {
             }
         }
 
-        let mut visited_vas = HashSet::with_capacity(metadata.bin.len());
+        let mut visited_vas = AHashSet::with_capacity(metadata.bin.len());
         for b in metadata.blocks.values() {
             for (&va, _) in metadata.bin.range(b.range.clone()) {
                 if !visited_vas.insert(va) {
