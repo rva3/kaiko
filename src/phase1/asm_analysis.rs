@@ -210,14 +210,16 @@ impl AsmAnalysis {
                     code
                 }
                 Err(e) => {
-                    // discard invalid instruction which caused jump to here
-                    let mut iter = metadata.branch.all_jumps_for(va);
+                    // disconnect this block from others
+                    let mut iter = metadata.branch.all_for(va);
                     if let Some(caller_va) = iter.next() {
-                        self.bad.push(caller_va);
-
                         if iter.next().is_some() {
                             todo!("more than one invalid jump to {va:#x}?");
                         }
+
+                        debug!("discard {caller_va:#x}");
+                        drop(iter);
+                        metadata.branch.discard(caller_va);
                     }
                     // this is debug because we don't track any literal pools or noreturns, so falling into garbage is possible
                     debug!("disassembler error at {va:#x}: {e:?}");
@@ -450,7 +452,10 @@ impl AsmAnalysis {
             va = next_va;
         }
 
-        trace!("{start_va:#x} code size: {} instructions", bin.len());
+        trace!(
+            "{start_va:#x}..={last_va:#x}: code size: {} instructions",
+            bin.len()
+        );
 
         if !bin.is_empty() {
             metadata
@@ -479,10 +484,12 @@ impl AsmAnalysis {
         }
 
         // discard invalid jumps
+        debug!("discarding invalid jumps");
         self.bad.iter().for_each(|&va| {
             if let Some((_, block)) = metadata.blocks.range_mut(..=va).next_back()
                 && block.contains_va(va)
             {
+                trace!("dropping {va:#x}");
                 let end_va = *metadata
                     .bin
                     .range(..block.end_va() - 1)
