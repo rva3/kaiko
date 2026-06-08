@@ -7,7 +7,7 @@ use crate::{Code, ext::dataref::a32_ldr_data, regext::RegExt};
 
 pub type RegisterState = [Value; 16];
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub enum Value {
     #[default]
     /// Not yet analyzed
@@ -39,20 +39,20 @@ impl Display for Value {
 }
 
 impl Value {
-    pub fn merge(&self, other: &Self) -> Self {
+    pub fn merge(self, other: Self) -> Self {
         match (self, other) {
             // select known state if any is uninit
-            (Value::Uninitialized, x) | (x, Value::Uninitialized) => x.clone(),
+            (Value::Uninitialized, x) | (x, Value::Uninitialized) => x,
 
             // equal states
-            (a, b) if a == b => a.clone(),
+            (a, b) if a == b => a,
 
             _ => Value::Unknown,
         }
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub struct RegWriteTracker {
     regs: RegisterState,
 }
@@ -85,7 +85,7 @@ impl RegWriteTracker {
     }
 
     pub fn get(&self, reg: u8) -> Value {
-        self.regs[reg as usize].clone()
+        self.regs[reg as usize]
     }
 
     pub fn try_get_imm(&self, reg: Reg, base_address: u32, data: &[u8]) -> Option<u32> {
@@ -139,13 +139,13 @@ impl RegWriteTracker {
     }
 
     pub fn snapshot(&self) -> RegisterState {
-        self.regs.clone()
+        self.regs
     }
 
     pub fn merge(&mut self, other: &Self) -> bool {
         let mut changed = false;
         for i in 0..16 {
-            let merged = self.regs[i].merge(&other.regs[i]);
+            let merged = self.regs[i].merge(other.regs[i]);
             if self.regs[i] != merged {
                 self.regs[i] = merged;
                 changed = true;
@@ -163,7 +163,7 @@ impl RegWriteTracker {
                 if let Operand::Reg(r) = code.instruction.operands[0] {
                     if let Operand::Reg(rm) = code.instruction.operands[1] {
                         trace!("MOV: copy r{} to {}", rm.number(), r.number());
-                        self.regs[r.number() as usize] = self.regs[rm.number() as usize].clone();
+                        self.regs[r.number() as usize] = self.regs[rm.number() as usize];
                     } else if let Operand::Imm12(imm) = code.instruction.operands[1] {
                         trace!("MOV: {imm:#x} (imm12) to {}", r.number());
                         self.immediate(r.number(), imm as u32);

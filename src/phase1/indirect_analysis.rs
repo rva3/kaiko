@@ -36,7 +36,7 @@ impl IndirectAnalysis {
             qlookup.remove(&start_va);
             let (range, mode, mut rwt) = {
                 let block = metadata.blocks.get(&start_va).unwrap();
-                (block.range.clone(), block.mode, block.entry_state.clone())
+                (block.range.clone(), block.mode, block.entry_state)
             };
 
             for (va, code) in metadata.bin.range(range.clone()) {
@@ -68,7 +68,7 @@ impl IndirectAnalysis {
             if let Some(block) = metadata.blocks.get_mut(&start_va) {
                 // if block state changed then update it
                 if block.exit_state != rwt {
-                    block.exit_state = rwt.clone();
+                    block.exit_state = rwt;
                     state_changed = true;
                 }
             }
