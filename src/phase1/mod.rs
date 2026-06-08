@@ -29,7 +29,7 @@ pub struct Metadata {
     /// all disassembled instructions
     pub bin: BTreeMap<u32, Code>,
     /// all basic blocks
-    pub blocks: Vec<BasicBlock>,
+    pub blocks: BTreeMap<u32, BasicBlock>,
     /// branch metadata
     pub branch: BranchAnalysis,
 
@@ -45,7 +45,7 @@ impl Metadata {
             data,
             base_address,
             bin: BTreeMap::new(),
-            blocks: Vec::new(),
+            blocks: BTreeMap::new(),
             branch: BranchAnalysis::new(),
             slots: AHashSet::new(),
             refs: AHashMap::new(),
@@ -79,7 +79,7 @@ impl Metadata {
     pub fn into_2nd(self) -> P2Metadata {
         let mut blocks = self
             .blocks
-            .into_iter()
+            .into_values()
             .map(|b| {
                 P2BasicBlock::new(b.range, b.mode, b.predecessors, b.successors, b.entry_state)
             })

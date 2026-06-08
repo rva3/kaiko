@@ -38,7 +38,7 @@ impl AsmAnalysis {
         use std::collections::HashSet;
 
         // all blocks must have start <= end
-        for b in &metadata.blocks {
+        for b in metadata.blocks.values() {
             if b.start_va() <= b.end_va() {
                 trace!("{:#x?} has valid range", b.range);
             } else {
@@ -50,7 +50,7 @@ impl AsmAnalysis {
         }
 
         let mut visited_vas = HashSet::with_capacity(metadata.bin.len());
-        for b in &metadata.blocks {
+        for b in metadata.blocks.values() {
             for (&va, _) in metadata.bin.range(b.range.clone()) {
                 if !visited_vas.insert(va) {
                     trace!("{va:#x} overlaps in some blocks");
@@ -74,10 +74,8 @@ impl AsmAnalysis {
         }
 
         // all jump targets must start block
-        let block_starts: HashSet<u32> = metadata.blocks.iter().map(|b| b.start_va()).collect();
-
         let do_va_check = |va: u32| -> Result<()> {
-            if block_starts.contains(&va) {
+            if metadata.blocks.contains_key(&va) {
                 Ok(())
             } else {
                 Err(Phase1Error::SelfTest(
@@ -110,24 +108,26 @@ impl AsmAnalysis {
 
     /// ensure basic block at `va` is being split
     fn ensure_split(&self, metadata: &mut Metadata, va: u32) {
-        if let Some(idx) = metadata
-            .blocks
-            .iter()
-            // if it's start then we don't to split
-            .position(|b| b.contains_va(va) && b.start_va() != va)
+        // get the start va from range
+        if let Some((start_va, block)) = metadata.blocks.range(..=va).next_back().map(|(va, block)| (*va, block))
+            // check if we actually need splitting
+            && block.contains_va(va)
+            && start_va != va
         {
-            let block = &metadata.blocks[idx];
-            let old_start = block.start_va();
-            let old_end = block.end_va();
-            let mode = block.mode;
-
             if let Some((&prev_va, _)) = metadata.bin.range(..va).next_back() {
-                debug!("splitting {old_start:#x}..{old_end:#x} at {va:#x}");
-                metadata.blocks[idx].range = old_start..=prev_va;
-                metadata.blocks.push(BasicBlock::new(va..=old_end, mode));
+                debug!("splitting block starting at {start_va:#x} at {va:#x}");
+
+                let old_block = metadata.blocks.get_mut(&start_va).unwrap();
+                let old_end = old_block.end_va();
+                let mode = old_block.mode;
+
+                old_block.range = start_va..=prev_va;
+
+                let new_block = BasicBlock::new(va..=old_end, mode);
+                metadata.blocks.insert(va, new_block);
 
                 if !metadata.branch.jumps.contains_key(&prev_va) {
-                    trace!("marking implicit fall-through jump from {prev_va:#x} to {va:#x}");
+                    trace!("marking implicit fallthrough jump from {prev_va:#x} to {va:#x}");
                     metadata.branch.mark_as_direct_jump(prev_va, va);
                 }
             } else {
@@ -140,7 +140,7 @@ impl AsmAnalysis {
     #[instrument(skip(self, metadata), fields(va = format_args!("{:#x}", va)), level = "trace")]
     pub fn enqueue_va(&mut self, metadata: &mut Metadata, va: u32, mode: CpuMode) {
         // is there a block which has `va` as start?
-        if metadata.blocks.iter().any(|b| b.start_va() == va) {
+        if metadata.blocks.contains_key(&va) {
             // then everything is done
             debug!("{va:#x} already processed and exists as block start, no need to split");
             return;
@@ -176,7 +176,9 @@ impl AsmAnalysis {
             }
 
             // is va somewhere in the existing block?
-            if let Some(block) = metadata.blocks.iter().find(|b| b.contains_va(va)) {
+            if let Some((_, block)) = metadata.blocks.range(..=va).next_back()
+                && block.contains_va(va)
+            {
                 debug!("{va:#x} overlaps with {:#x?}, stop", block.range);
                 break;
             }
@@ -441,7 +443,7 @@ impl AsmAnalysis {
         if !bin.is_empty() {
             metadata
                 .blocks
-                .push(BasicBlock::new(start_va..=last_va, mode));
+                .insert(start_va, BasicBlock::new(start_va..=last_va, mode));
         }
 
         Ok(bin)
@@ -466,7 +468,9 @@ impl AsmAnalysis {
 
         // discard invalid jumps
         self.bad.iter().for_each(|&va| {
-            if let Some(block) = metadata.blocks.iter_mut().find(|b| b.contains_va(va)) {
+            if let Some((_, block)) = metadata.blocks.range_mut(..=va).next_back()
+                && block.contains_va(va)
+            {
                 let end_va = *metadata
                     .bin
                     .range(..block.end_va() - 1)

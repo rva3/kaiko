@@ -4,7 +4,7 @@ pub struct BlockAnalysis;
 
 impl BlockAnalysis {
     pub fn add_metadata(metadata: &mut Metadata) {
-        for block in &mut metadata.blocks {
+        for block in metadata.blocks.values_mut() {
             // predecessors are blocks which jump to this block, but not function calls
             block
                 .predecessors

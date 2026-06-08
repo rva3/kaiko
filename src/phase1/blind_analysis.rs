@@ -20,15 +20,13 @@ impl BlindAnalysis {
 
         let min_exec_va = metadata
             .blocks
-            .iter()
-            .map(|b| b.start_va())
-            .min()
+            .first_key_value()
+            .map(|(va, _)| *va)
             .unwrap_or(metadata.base_address);
         let max_exec_va = metadata
             .blocks
-            .iter()
-            .map(|b| b.end_va())
-            .max()
+            .last_key_value()
+            .map(|(va, _)| *va)
             .unwrap_or(metadata.base_address + metadata.data.len() as u32);
 
         debug!("allow range: {min_exec_va:#x}..={max_exec_va:#x}");
@@ -39,9 +37,8 @@ impl BlindAnalysis {
         while va < max_exec_va {
             trace!("try {va:#x}");
 
-            if let Some(block) = code_blacklist
-                .iter()
-                .find(|code_blacklist| code_blacklist.range.contains(&va))
+            if let Some((_, block)) = code_blacklist.range(..=va).next_back()
+                && block.contains_va(va)
             {
                 trace!("existing code at {va:#x}");
                 va += if block.mode == CpuMode::Arm { 4 } else { 2 };

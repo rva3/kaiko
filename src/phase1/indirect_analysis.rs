@@ -24,17 +24,13 @@ impl IndirectAnalysis {
 
         // all blocks go into queue
         self.queue.clear();
-        for block in &metadata.blocks {
-            self.queue.push(block.start_va());
+        for va in metadata.blocks.keys() {
+            self.queue.push(*va);
         }
 
         while let Some(start_va) = self.queue.pop() {
             let (range, mode, mut rwt) = {
-                let block = metadata
-                    .blocks
-                    .iter()
-                    .find(|b| b.start_va() == start_va)
-                    .unwrap();
+                let block = metadata.blocks.get(&start_va).unwrap();
                 (block.range.clone(), block.mode, block.entry_state.clone())
             };
 
@@ -64,11 +60,7 @@ impl IndirectAnalysis {
             trace!("{:?}", rwt.snapshot());
 
             let mut state_changed = false;
-            if let Some(block) = metadata
-                .blocks
-                .iter_mut()
-                .find(|b| b.start_va() == start_va)
-            {
+            if let Some(block) = metadata.blocks.get_mut(&start_va) {
                 // if block state changed then update it
                 if block.exit_state != rwt {
                     block.exit_state = rwt.clone();
@@ -97,7 +89,7 @@ impl IndirectAnalysis {
                 }
 
                 for va in successor_vas {
-                    if let Some(block) = metadata.blocks.iter_mut().find(|b| b.start_va() == va) {
+                    if let Some(block) = metadata.blocks.get_mut(&va) {
                         if block.entry_state.merge(&rwt) {
                             if !self.queue.contains(&va) {
                                 debug!("state change propagated, queue {va:#x} again");
