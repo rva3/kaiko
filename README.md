@@ -14,7 +14,7 @@ computes the register state and resolves the indirect jumps, feeding back new da
 instructions are found.
 
 ### fast?
-faster than the Ghidra and not-so-much-faster than the IDA Pro. mostly due to less features.
+processes 75.5k instructions (411 fns, 15.1k blocks) in 90ms (ryzen 7 7435hs)
 
 ### small
 can be embedded into a rust application without FFI for IDA or Ghidra. with `opt-level = "z"`, fat
