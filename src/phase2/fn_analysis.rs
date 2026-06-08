@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::phase2::{Function, Metadata};
+use ahash::AHashMap;
 use tracing::{debug, instrument, trace};
 
 pub struct FnAnalysis;
@@ -8,6 +9,13 @@ pub struct FnAnalysis;
 impl FnAnalysis {
     #[instrument(skip(metadata), level = "trace")]
     pub fn create_functions(metadata: &mut Metadata) {
+        let va2idx = metadata
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.start_va(), i))
+            .collect::<AHashMap<_, _>>();
+
         for i in 0..metadata.blocks.len() {
             let block = &mut metadata.blocks[i];
 
@@ -43,14 +51,11 @@ impl FnAnalysis {
 
                 if let Some(current_block) = metadata.blocks.get(current_idx) {
                     for &successor_va in &current_block.successors {
-                        queue.push(
-                            metadata
-                                .blocks
-                                .iter()
-                                .enumerate()
-                                .find_map(|(i, b)| (b.start_va() == successor_va).then_some(i))
-                                .expect("block must exist since VA was added by the phase 1"),
-                        );
+                        if let Some(&idx) = va2idx.get(&successor_va) {
+                            queue.push(idx);
+                        } else {
+                            unreachable!("block must exist since VA was added by phase 1");
+                        }
                     }
                 }
             }

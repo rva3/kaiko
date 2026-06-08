@@ -1,3 +1,4 @@
+use ahash::AHashSet;
 use tracing::{debug, instrument, trace, warn};
 
 use crate::{
@@ -24,11 +25,15 @@ impl IndirectAnalysis {
 
         // all blocks go into queue
         self.queue.clear();
+        self.queue.reserve(metadata.blocks.len());
         for va in metadata.blocks.keys() {
             self.queue.push(*va);
         }
 
+        let mut qlookup = self.queue.iter().copied().collect::<AHashSet<_>>();
+
         while let Some(start_va) = self.queue.pop() {
+            qlookup.remove(&start_va);
             let (range, mode, mut rwt) = {
                 let block = metadata.blocks.get(&start_va).unwrap();
                 (block.range.clone(), block.mode, block.entry_state.clone())
@@ -91,7 +96,7 @@ impl IndirectAnalysis {
                 for va in successor_vas {
                     if let Some(block) = metadata.blocks.get_mut(&va) {
                         if block.entry_state.merge(&rwt) {
-                            if !self.queue.contains(&va) {
+                            if !qlookup.contains(&va) {
                                 debug!("state change propagated, queue {va:#x} again");
                                 self.queue.push(va);
                             }
