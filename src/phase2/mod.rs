@@ -51,16 +51,9 @@ impl Metadata {
         bin: BTreeMap<u32, Code>,
         blocks: Vec<BasicBlock>,
         refs: AHashMap<u32, u32>,
+        rev_refs: AHashMap<u32, SmallVec<[u32; 4]>>,
         branch: BranchAnalysis,
     ) -> Self {
-        let mut rev_refs: AHashMap<u32, SmallVec<[u32; 4]>> = AHashMap::new();
-        for (&code_va, &data_va) in &refs {
-            rev_refs.entry(data_va).or_default().push(code_va);
-        }
-        for code_vas in rev_refs.values_mut() {
-            code_vas.sort();
-        }
-
         Self {
             data,
             base_address,

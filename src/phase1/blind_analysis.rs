@@ -16,7 +16,7 @@ pub struct BlindAnalysis;
 impl BlindAnalysis {
     pub fn find_fns(metadata: &Metadata) -> Vec<(u32, CpuMode)> {
         let code_blacklist = &metadata.blocks;
-        let literal_blacklist = metadata.refs.values().map(|va| *va).collect::<Vec<_>>();
+        let literal_blacklist = &metadata.rev_refs;
 
         let min_exec_va = metadata
             .blocks
@@ -43,7 +43,7 @@ impl BlindAnalysis {
                 trace!("existing code at {va:#x}");
                 va += if block.mode == CpuMode::Arm { 4 } else { 2 };
                 continue;
-            } else if literal_blacklist.contains(&va) {
+            } else if literal_blacklist.contains_key(&va) {
                 trace!("literal at {va:#x}");
                 va += 4;
                 continue;

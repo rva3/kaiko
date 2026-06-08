@@ -1,5 +1,6 @@
 //! disassemble as much as possible instructions and create basic blocks
 use ahash::{AHashMap, AHashSet};
+use smallvec::SmallVec;
 use std::{collections::BTreeMap, ops::RangeInclusive};
 use tracing::{instrument, warn};
 
@@ -37,6 +38,8 @@ pub struct Metadata {
     pub slots: AHashSet<u32>,
     /// literals usage, mapped as <code va, literal va>
     pub refs: AHashMap<u32, u32>,
+    /// reverse literals, <literal va, code va>
+    pub rev_refs: AHashMap<u32, SmallVec<[u32; 4]>>,
 }
 
 impl Metadata {
@@ -49,6 +52,7 @@ impl Metadata {
             branch: BranchAnalysis::new(),
             slots: AHashSet::new(),
             refs: AHashMap::new(),
+            rev_refs: AHashMap::new(),
         }
     }
 
@@ -91,6 +95,7 @@ impl Metadata {
             self.bin,
             blocks,
             self.refs,
+            self.rev_refs,
             self.branch,
         )
     }

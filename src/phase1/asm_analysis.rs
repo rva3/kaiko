@@ -227,8 +227,7 @@ impl AsmAnalysis {
 
             // stop on literals
             if va != start_va
-                && (metadata.slots.contains(&va)
-                    || metadata.refs.values().any(|&literal_va| va == literal_va))
+                && (metadata.slots.contains(&va) || metadata.rev_refs.contains_key(&va))
             {
                 debug!("fell into literal pool/data ref at {va:#x}, stop");
                 break;
@@ -367,6 +366,7 @@ impl AsmAnalysis {
                                 // but this would trigger the check
                                 metadata.slots.insert(load + metadata.base_address);
                                 metadata.refs.insert(code.va, reg_val);
+                                metadata.rev_refs.entry(reg_val).or_default().push(code.va);
                                 trace!("add slot {:#x}", load + metadata.base_address);
                                 trace!("add {reg_val:#x} value for {va:#x}");
                             }
@@ -377,6 +377,7 @@ impl AsmAnalysis {
                     if let Operand::Imm32(imm) = code.instruction.operands[1] {
                         let addr = code.va().wrapping_add(imm);
                         metadata.refs.insert(code.va, addr);
+                        metadata.rev_refs.entry(addr).or_default().push(code.va);
                         trace!("add {addr:#x} to data refs");
                     } else {
                         unreachable!("ADR can't have non-imm operand (code: {code})");
@@ -420,9 +421,20 @@ impl AsmAnalysis {
 
                         // fix LDR value
                         metadata.refs.insert(ldr.va, ldr_val as u32);
+                        metadata.rev_refs.remove(&(ldr_val as u32));
+                        metadata
+                            .rev_refs
+                            .entry(ldr_val as u32)
+                            .or_default()
+                            .push(ldr.va);
 
                         // add new entry because data referenced by the LDR is a literal itself
                         metadata.refs.insert(code.va, ldr_va as u32);
+                        metadata
+                            .rev_refs
+                            .entry(ldr_va as u32)
+                            .or_default()
+                            .push(code.va);
                         debug!("ADD value: {ldr_va:#x}");
                     }
                 }
