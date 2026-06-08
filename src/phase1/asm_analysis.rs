@@ -1,3 +1,4 @@
+use smallvec::SmallVec;
 use tracing::{debug, instrument, trace, warn};
 
 use yaxpeax_arch::LengthedInstruction;
@@ -211,14 +212,12 @@ impl AsmAnalysis {
                 }
                 Err(e) => {
                     // disconnect this block from others
-                    let mut iter = metadata.branch.all_for(va);
-                    if let Some(caller_va) = iter.next() {
-                        if iter.next().is_some() {
-                            todo!("more than one invalid jump to {va:#x}?");
-                        }
-
+                    let mut todiscard = SmallVec::<[u32; 4]>::new();
+                    for caller_va in metadata.branch.all_for(va) {
+                        todiscard.push(caller_va);
+                    }
+                    for caller_va in todiscard {
                         debug!("discard {caller_va:#x}");
-                        drop(iter);
                         metadata.branch.discard(caller_va);
                     }
                     // this is debug because we don't track any literal pools or noreturns, so falling into garbage is possible
