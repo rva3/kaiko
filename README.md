@@ -16,6 +16,33 @@ instructions are found.
 ### fast?
 processes 75.5k instructions (411 fns, 15.1k blocks) in 90ms (ryzen 7 7435hs)
 
+#### compiler optimization
+- Cargo.toml: `opt-level = 3` + `lto = true` (or = "thin" for a bit larger binary)
+- PGO + BOLT:
+```
+# build PGO bin
+cargo pgo instrument build -- --features cli,no_tracers
+
+# run to collect PGO profiles
+./target/x86_64-unknown-linux-gnu/release/cli ...
+
+# build BOLT bin (requires BOLT installed)
+cargo pgo bolt build --with-pgo -- --features cli,no_tracers
+
+# run to collect BOLT profiles
+./target/x86_64-unknown-linux-gnu/release/cli-bolt-instrumented ...
+
+# build final bin
+cargo pgo bolt optimize --with-pgo -- --features cli,no_tracers
+
+# target bin
+file ./target/x86_64-unknown-linux-gnu/release/cli-bolt-optimized
+```
+
+note that PGO and BOLT need rebuild after every minor change for best results.
+
+applying PGO + BOLT gives ~75ms execution time on the same hardware and binary.
+
 ### small
 can be embedded into a rust application without FFI for IDA or Ghidra. with `opt-level = "z"`, fat
 LTO and `codegen-units = 1` the size can be reduced to the 70kb (x86).
