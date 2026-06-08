@@ -1,5 +1,4 @@
 - more self-tests. especially for phase 2
-- better performance (mostly by using `HashMap` in hot paths)
 - smaller structs (basicblock uses 272 bytes just for one instance!)
 - some kind of refresh API to be able to feed back data from the user
 - some abstraction over phase 1 to support arm64
