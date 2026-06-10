@@ -13,20 +13,25 @@ impl BlockAnalysis {
             // clone is very cheap here
             let block_code = metadata.bin.range(block.range.clone());
 
-            // XXX: move to branch analysis?
-            block.successors.extend(
-                block_code
-                    .filter_map(|(va, _)| match metadata.branch.get_callee(*va)? {
-                        JumpType::DirectJump(v) => Some([Some(*v), None]),
-                        JumpType::Branch {
-                            target,
-                            fallthrough,
-                        } => Some([Some(*target), Some(*fallthrough)]),
-                        _ => None,
-                    })
-                    .flatten()
-                    .filter_map(|va| va),
-            );
+            block_code.for_each(|(va, _)| match metadata.branch.get_callee(*va) {
+                Some(JumpType::DirectJump(v)) => block.successors.push(*v),
+                Some(JumpType::Branch {
+                    target,
+                    fallthrough,
+                }) => {
+                    block.successors.push(*target);
+                    block.successors.push(*fallthrough);
+                }
+                Some(JumpType::Table(idx)) => {
+                    let items = metadata
+                        .branch
+                        .jump_tables
+                        .get(*idx)
+                        .expect("jump table must exist");
+                    block.successors.extend(items);
+                }
+                _ => (),
+            });
         }
     }
 }

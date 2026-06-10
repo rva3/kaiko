@@ -15,6 +15,8 @@ pub enum JumpType {
     IndirectJump(Reg),
     /// conditional B/CBZ/CBNZ
     Branch { target: u32, fallthrough: u32 },
+    /// TBB/TBH/LDR PC as jumptable
+    Table(usize),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -22,6 +24,7 @@ pub enum EdgeType {
     Call,
     Jump,
     Branch,
+    Table,
 }
 
 #[derive(Debug)]
@@ -30,6 +33,8 @@ pub struct BranchAnalysis {
     pub jumps: AHashMap<u32, JumpType>,
     /// <callee, Vec<callers>>
     pub rev_jumps: AHashMap<u32, SmallVec<[(u32, EdgeType); 4]>>,
+    /// jump table entries
+    pub jump_tables: Vec<SmallVec<[u32; 10]>>,
 }
 
 impl BranchAnalysis {
@@ -37,6 +42,7 @@ impl BranchAnalysis {
         Self {
             jumps: AHashMap::new(),
             rev_jumps: AHashMap::new(),
+            jump_tables: Vec::new(),
         }
     }
 
@@ -92,6 +98,21 @@ impl BranchAnalysis {
             .push((me, EdgeType::Branch));
     }
 
+    /// mark `target` as jump table with `me` as base
+    #[instrument(skip(self), fields(me = format_args!("{:#x}", me)), level = "trace")]
+    pub fn mark_as_table(&mut self, me: u32, targets: &[u32]) {
+        let idx = self.jump_tables.len();
+        self.jump_tables.push(SmallVec::from_slice(targets));
+        self.jumps.insert(me, JumpType::Table(idx));
+
+        for &target in targets {
+            self.rev_jumps
+                .entry(target)
+                .or_default()
+                .push((me, EdgeType::Table));
+        }
+    }
+
     /// is `va` a function?
     ///
     /// if it's a function, then at least one `JumpType::DirectCall` should point to it
@@ -114,7 +135,7 @@ impl BranchAnalysis {
             .get(&va)
             .into_iter()
             .flat_map(|callers| callers.iter())
-            .filter(|(_, ty)| matches!(ty, EdgeType::Jump | EdgeType::Branch))
+            .filter(|(_, ty)| matches!(ty, EdgeType::Jump | EdgeType::Branch | EdgeType::Table))
             .map(|(caller_va, _)| *caller_va)
     }
 
@@ -125,28 +146,40 @@ impl BranchAnalysis {
             .get(&va)
             .into_iter()
             .flat_map(|callers| callers.iter())
-            .filter(|(_, ty)| matches!(ty, EdgeType::Call | EdgeType::Jump | EdgeType::Branch))
+            .filter(|(_, ty)| {
+                matches!(
+                    ty,
+                    EdgeType::Call | EdgeType::Jump | EdgeType::Branch | EdgeType::Table
+                )
+            })
             .map(|(caller_va, _)| *caller_va)
     }
 
     /// remove entry
     #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
     pub fn discard(&mut self, va: u32) {
+        let mut do_discard = |t: u32| {
+            if let Some(callers) = self.rev_jumps.get_mut(&t) {
+                callers.retain(|(caller_va, _)| *caller_va != va);
+            }
+        };
+
         if let Some(ty) = self.jumps.remove(&va) {
-            let targets = match ty {
-                JumpType::DirectCall(t) | JumpType::DirectJump(t) => [Some(t), None],
+            match ty {
+                JumpType::DirectCall(t) | JumpType::DirectJump(t) => do_discard(t),
                 JumpType::Branch {
                     target,
                     fallthrough,
-                } => [Some(target), Some(fallthrough)],
-                _ => [None, None],
-            };
-
-            targets.iter().flatten().for_each(|t| {
-                if let Some(callers) = self.rev_jumps.get_mut(&t) {
-                    callers.retain(|(caller_va, _)| *caller_va != va);
+                } => {
+                    do_discard(target);
+                    do_discard(fallthrough);
                 }
-            });
+                JumpType::Table(idx) => {
+                    let items = self.jump_tables.remove(idx);
+                    items.into_iter().for_each(|t| do_discard(t));
+                }
+                _ => (),
+            };
         }
     }
 }

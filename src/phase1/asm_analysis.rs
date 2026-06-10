@@ -2,7 +2,7 @@ use smallvec::SmallVec;
 use tracing::{debug, instrument, trace, warn};
 
 use yaxpeax_arch::LengthedInstruction;
-use yaxpeax_arm::armv7::{ConditionCode, Opcode, Operand};
+use yaxpeax_arm::armv7::{ConditionCode, Opcode, Operand, Reg, RegShiftStyle, ShiftStyle};
 
 use crate::{
     Code,
@@ -323,6 +323,43 @@ impl AsmAnalysis {
                 Opcode::ERET => {
                     stop = true;
                 }
+                Opcode::TBB => {
+                    if let Operand::RegDerefPreindexReg(r_should_be_pc, r, _, _) =
+                        code.instruction.operands[0]
+                        && r_should_be_pc.is_pc()
+                    {
+                        self.table_expand(metadata, code.va, mode, r, code.pc(), None, 1);
+                    } else {
+                        unreachable!("bad jumptable at {code}: {:?}", code.instruction.operands);
+                    }
+
+                    // stop because TBB [PC, Rn] means the jump targets will be right
+                    // after this instruction
+                    stop = true;
+                }
+                Opcode::TBH => {
+                    if let Operand::RegDerefPreindexRegShift(r_should_be_pc, shift, _, _) =
+                        code.instruction.operands[0]
+                        && r_should_be_pc.is_pc()
+                    {
+                        let r = match shift.into_shift() {
+                            RegShiftStyle::RegImm(ris) => {
+                                if ris.imm() != 1 || ris.stype() != ShiftStyle::LSL {
+                                    unreachable!("bad shift value (code: {code})");
+                                }
+                                ris.shiftee()
+                            }
+                            _ => unreachable!("bad shift for jump table (code: {code})"),
+                        };
+
+                        self.table_expand(metadata, code.va, mode, r, code.pc(), None, 2);
+                    } else {
+                        unreachable!("bad jumptable at {code}: {:?}", code.instruction.operands);
+                    }
+
+                    // same as TBB
+                    stop = true;
+                }
                 Opcode::LDR => {
                     if let Operand::Reg(rt) = code.instruction.operands[0]
                         && let Operand::RegDerefPreindexOffset(r, imm, up, _) =
@@ -534,6 +571,66 @@ impl AsmAnalysis {
             },
             CpuMode::Thumb => disassemble_thumb_oneshot(data).map_err(Into::into),
         }
+    }
+
+    /// crate jump table from given parameters
+    fn table_expand(
+        &mut self,
+        metadata: &mut Metadata,
+        table_inst_va: u32,
+        mode: CpuMode,
+        table_target: Reg,
+        table_start: u32,
+        table_size: Option<u32>,
+        word_size: usize,
+    ) {
+        let size = table_size.unwrap_or_else(|| {
+            // table size is in the previous block
+            metadata
+                .bin
+                .range(..table_inst_va)
+                .rev()
+                .take(20)
+                .find_map(|(_, c)| {
+                    if c.instruction.opcode == Opcode::CMP
+                        && let Operand::Reg(r) = c.instruction.operands[0]
+                        && r == table_target
+                        && let Operand::Imm32(imm) = c.instruction.operands[1]
+                    {
+                        Some(imm)
+                    } else {
+                        None
+                    }
+                })
+                .expect("failed to determine table size :(")
+        });
+
+        let offset = (table_start - metadata.base_address) as usize;
+        let targets = metadata.data[offset..offset + (size * word_size as u32) as usize]
+            .chunks(word_size)
+            .map(|word| {
+                let branch_offset = match word_size {
+                    1 => word[0] as u32,
+                    2 => u16::from_le_bytes(word.try_into().unwrap()) as u32,
+                    4 => u32::from_le_bytes(word.try_into().unwrap()),
+                    _ => unreachable!("invalid table word size"),
+                };
+
+                if word_size == 4 {
+                    // LDR jumps are absolute
+                    branch_offset
+                } else {
+                    // TBB/TBH are not
+                    table_start + (2 * branch_offset)
+                }
+            })
+            .collect::<SmallVec<[u32; 10]>>();
+
+        debug!("jump table at {table_inst_va:#x}: {:#x?}", targets);
+        metadata.branch.mark_as_table(table_inst_va, &targets);
+        targets
+            .into_iter()
+            .for_each(|target| self.enqueue_va(metadata, target, mode));
     }
 
     /// map branch immediate value to VA
