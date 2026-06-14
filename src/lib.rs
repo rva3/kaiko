@@ -208,6 +208,12 @@ impl Analyzer {
         self.blocks().find(|b| b.contains_va(va))
     }
 
+    /// get data referenced by the `va`
+    #[must_use]
+    pub fn dataref_by_va(&self, va: u32) -> Option<u32> {
+        self.metadata.refs.get(&va).map(|v| *v)
+    }
+
     /// because there are orphan strings which break stuff
     fn str_iter(&self, s: &str) -> impl Iterator<Item = u32> {
         memmem::find_iter(&self.metadata.data, s).filter_map(|off| self.map_va(off))
