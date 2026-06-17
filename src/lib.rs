@@ -66,7 +66,7 @@ impl Code {
     /// get PC offset for current instruction
     #[inline(always)]
     #[must_use]
-    pub(crate) fn pc(&self) -> u32 {
+    pub fn pc(&self) -> u32 {
         self.va + if self.instruction.thumb() { 4 } else { 8 }
     }
 }
@@ -94,6 +94,9 @@ impl Analyzer {
         let mut indirect = IndirectAnalysis::new();
 
         analyzer.enqueue_va(&mut metadata, base_address + entry_offset, entry_mode);
+        metadata
+            .branch
+            .mark_as_direct_call(base_address + entry_offset, base_address + entry_offset);
 
         let mut blind_scan_ran = false;
         loop {
@@ -206,6 +209,12 @@ impl Analyzer {
     #[must_use]
     pub fn block_by_va(&self, va: u32) -> Option<BasicBlockView<'_>> {
         self.blocks().find(|b| b.contains_va(va))
+    }
+
+    /// get code by `va`
+    #[must_use]
+    pub fn code_by_va(&self, va: u32) -> Option<&Code> {
+        self.metadata.bin.get(&va)
     }
 
     /// get data referenced by the `va`

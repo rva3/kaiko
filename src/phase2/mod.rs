@@ -312,6 +312,11 @@ impl<'a> FunctionView<'a> {
         })
     }
 
+    /// function mode
+    pub fn mode(&self) -> CpuMode {
+        self.blocks().next().unwrap().block.mode
+    }
+
     /// is the `va` in the function?
     pub fn contains_va(&self, va: u32) -> bool {
         self.blocks().any(|b| b.contains_va(va))
