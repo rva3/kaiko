@@ -221,7 +221,7 @@ impl AsmAnalysis {
                         metadata.branch.discard(caller_va);
                     }
                     // this is debug because we don't track any literal pools or noreturns, so falling into garbage is possible
-                    debug!("disassembler error at {va:#x}: {e:?}");
+                    debug!("disassembler error at {va:#x}: {e:?} (data: {data:#04x?})");
                     break;
                 }
             };
