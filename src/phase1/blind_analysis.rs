@@ -1,6 +1,6 @@
 use tracing::{debug, trace};
 use yaxpeax_arch::LengthedInstruction;
-use yaxpeax_arm::armv7::{Opcode, Operand};
+use yaxpeax_arm::armv7::{ConditionCode, Opcode, Operand};
 
 use crate::{
     Code,
@@ -15,7 +15,6 @@ use crate::{
 pub struct BlindAnalysis;
 impl BlindAnalysis {
     pub fn find_fns(metadata: &Metadata) -> Vec<(u32, CpuMode)> {
-        let code_blacklist = &metadata.blocks;
         let literal_blacklist = &metadata.rev_refs;
 
         let min_exec_va = metadata
@@ -37,13 +36,11 @@ impl BlindAnalysis {
         while va < max_exec_va {
             trace!("try {va:#x}");
 
-            if let Some((_, block)) = code_blacklist.range(..=va).next_back()
-                && block.contains_va(va)
-            {
+            if let Some(code) = metadata.code_covering(va) {
                 trace!("existing code at {va:#x}");
-                va += if block.mode == CpuMode::Arm { 4 } else { 2 };
+                va = code.va + code.instruction.len().to_const();
                 continue;
-            } else if literal_blacklist.contains_key(&va) {
+            } else if literal_blacklist.contains_key(&va) || metadata.slots.contains(&va) {
                 trace!("literal at {va:#x}");
                 va += 4;
                 continue;
@@ -93,7 +90,7 @@ impl BlindAnalysis {
             // saved LR
             Opcode::PUSH => {
                 if let Operand::RegList(list) = code.instruction.operands[0] {
-                    list.has_lr()
+                    list.has_lr() && !list.has_pc() && !list.has_sp()
                 } else {
                     false
                 }
@@ -127,6 +124,16 @@ impl BlindAnalysis {
                 return false;
             }
 
+            if metadata.slots.contains(&va) || metadata.rev_refs.contains_key(&va) {
+                trace!("hit literal at {va:#x}, stop");
+                return false;
+            }
+
+            if decoded > 0 && metadata.code_covering(va).is_some() {
+                trace!("fell through into known code at {va:#x}, stop");
+                return true;
+            }
+
             let data = if let Some(data) = metadata.data.get(offset..offset + 4) {
                 data
             } else {
@@ -154,23 +161,40 @@ impl BlindAnalysis {
                     }
                     Opcode::BX => {
                         if let Operand::Reg(r) = code.instruction.operands[0] {
-                            if r.is_lr() {
+                            if r.is_lr() && code.instruction.condition == ConditionCode::AL {
                                 trace!("hit BX LR, stop");
                                 return true;
                             }
                         }
                     }
-                    Opcode::B | Opcode::BL | Opcode::BLX => {
-                        if let Operand::BranchOffset(imm) | Operand::BranchThumbOffset(imm) =
+                    Opcode::B | Opcode::BL | Opcode::BLX | Opcode::CBZ | Opcode::CBNZ => {
+                        let op = if matches!(code.instruction.opcode, Opcode::CBZ | Opcode::CBNZ) {
+                            code.instruction.operands[1]
+                        } else {
                             code.instruction.operands[0]
-                        {
-                            let target = code.pc().wrapping_add_signed(imm);
+                        };
+                        let target = match op {
+                            Operand::BranchOffset(imm) | Operand::BranchThumbOffset(imm) => {
+                                Some(code.pc().wrapping_add_signed(imm))
+                            }
+                            _ => None,
+                        };
 
-                            if target < metadata.base_address
-                                || target >= metadata.base_address + metadata.data.len() as u32
+                        if let Some(target) = target {
+                            let target_va = target & !1;
+                            if !metadata.is_valid_va(target_va)
+                                || metadata
+                                    .code_covering(target_va)
+                                    .is_some_and(|c| c.va != target_va)
                             {
                                 trace!("hit junk branch/call, stop");
                                 return false; // junk
+                            }
+                            if code.instruction.opcode == Opcode::B
+                                && code.instruction.condition == ConditionCode::AL
+                            {
+                                trace!("hit unconditional B, stop");
+                                return true;
                             }
                         }
                     }
