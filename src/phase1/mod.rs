@@ -129,6 +129,10 @@ pub struct BasicBlock {
     pub entry_state: RegWriteTracker,
     /// state when block is finished
     pub exit_state: RegWriteTracker,
+    /// whether register state needs to be (re-)computed for this block
+    pub needs_reg_analysis: bool,
+    /// whether this block is currently in `IndirectAnalysis` queue
+    pub in_reg_queue: bool,
 }
 
 impl BasicBlock {
@@ -141,7 +145,16 @@ impl BasicBlock {
             // placeholder for initial discovery
             entry_state: RegWriteTracker::new(),
             exit_state: RegWriteTracker::new(),
+            needs_reg_analysis: true,
+            in_reg_queue: false,
         }
+    }
+
+    /// shrink block range after a split or instruction rollback and mark it for re-analysis
+    pub fn shrink_end(&mut self, new_end: u32) {
+        self.range = self.start_va()..=new_end;
+        self.exit_state = RegWriteTracker::new();
+        self.needs_reg_analysis = true;
     }
 
     /// start of the block range

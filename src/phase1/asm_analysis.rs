@@ -133,7 +133,7 @@ impl AsmAnalysis {
                 let old_end = old_block.end_va();
                 let mode = old_block.mode;
 
-                old_block.range = start_va..=prev_va;
+                old_block.shrink_end(prev_va);
 
                 let new_block = BasicBlock::new(va..=old_end, mode);
                 metadata.blocks.insert(va, new_block);
@@ -688,7 +688,7 @@ impl AsmAnalysis {
                     .next_back()
                     .expect("invalid instruction at start")
                     .0;
-                block.range = block.start_va()..=end_va;
+                block.shrink_end(end_va);
                 metadata.bin.remove_entry(&va);
                 metadata.branch.discard(va);
             }

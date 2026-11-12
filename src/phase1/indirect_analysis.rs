@@ -1,4 +1,6 @@
-use ahash::AHashSet;
+use std::collections::VecDeque;
+
+use smallvec::SmallVec;
 use tracing::{debug, instrument, trace, warn};
 
 use crate::{
@@ -7,12 +9,14 @@ use crate::{
 };
 
 pub struct IndirectAnalysis {
-    pub queue: Vec<u32>,
+    pub queue: VecDeque<u32>,
 }
 
 impl IndirectAnalysis {
     pub fn new() -> Self {
-        Self { queue: Vec::new() }
+        Self {
+            queue: VecDeque::new(),
+        }
     }
 
     /// try resolve register values for indirect jumps/calls
@@ -23,19 +27,20 @@ impl IndirectAnalysis {
     pub fn resolve_register_state(&mut self, metadata: &mut Metadata) -> Vec<(u32, CpuMode)> {
         let mut new_jumps = Vec::new();
 
-        // all blocks go into queue
+        // queue only newly created or modified blocks in ascending VA order
         self.queue.clear();
-        self.queue.reserve(metadata.blocks.len());
-        for va in metadata.blocks.keys() {
-            self.queue.push(*va);
+        for (&va, block) in metadata.blocks.iter_mut() {
+            if block.needs_reg_analysis {
+                block.needs_reg_analysis = false;
+                block.in_reg_queue = true;
+                self.queue.push_back(va);
+            }
         }
 
-        let mut qlookup = self.queue.iter().copied().collect::<AHashSet<_>>();
-
-        while let Some(start_va) = self.queue.pop() {
-            qlookup.remove(&start_va);
+        while let Some(start_va) = self.queue.pop_front() {
             let (range, mode, mut rwt) = {
-                let block = metadata.blocks.get(&start_va).unwrap();
+                let block = metadata.blocks.get_mut(&start_va).unwrap();
+                block.in_reg_queue = false;
                 (block.range.clone(), block.mode, block.entry_state)
             };
 
@@ -81,7 +86,7 @@ impl IndirectAnalysis {
                 trace!("state changed");
                 // set new state to all successor blocks
                 let end_va = *range.end();
-                let mut successor_vas = Vec::new();
+                let mut successor_vas: SmallVec<[u32; 4]> = SmallVec::new();
 
                 if let Some(callee) = metadata.branch.get_callee(end_va) {
                     match callee {
@@ -108,10 +113,11 @@ impl IndirectAnalysis {
                 for va in successor_vas {
                     if let Some(block) = metadata.blocks.get_mut(&va) {
                         if block.entry_state.merge(&rwt) {
-                            if !qlookup.contains(&va) {
+                            block.needs_reg_analysis = false;
+                            if !block.in_reg_queue {
                                 debug!("state change propagated, queue {va:#x} again");
-                                self.queue.push(va);
-                                qlookup.insert(va);
+                                block.in_reg_queue = true;
+                                self.queue.push_back(va);
                             }
                         }
                     }
