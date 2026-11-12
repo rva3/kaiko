@@ -3,6 +3,7 @@ use ahash::{AHashMap, AHashSet};
 use smallvec::SmallVec;
 use std::{collections::BTreeMap, ops::RangeInclusive};
 use tracing::{instrument, warn};
+use yaxpeax_arch::LengthedInstruction;
 
 use crate::{
     Code,
@@ -60,23 +61,33 @@ impl Metadata {
         self.bin.values()
     }
 
+    #[inline(always)]
+    pub fn unmap_va(&self, va: u32) -> Option<usize> {
+        let off = va.checked_sub(self.base_address)? as usize;
+        (off < self.data.len()).then_some(off)
+    }
+
+    #[inline(always)]
+    pub fn is_valid_va(&self, va: u32) -> bool {
+        self.unmap_va(va).is_some()
+    }
+
+    /// Return the disassembled instruction whose byte span `[code.va, code.va + len)` covers `va`.
+    #[inline(always)]
+    pub fn code_covering(&self, va: u32) -> Option<&Code> {
+        let (_, code) = self.bin.range(..=va).next_back()?;
+        let end = code.va.saturating_add(code.instruction.len().to_const());
+        (va < end).then_some(code)
+    }
+
     #[instrument(skip(self), fields(va = format_args!("{:#x}", va)), level = "trace")]
     #[inline(always)]
     pub fn map_va(&self, va: u32) -> Option<u32> {
-        if va < self.base_address {
-            if va < self.data.len() as u32 {
-                Some(self.base_address + va)
-            } else {
-                warn!("failed to map {va:#x}: less than base addr but more than data len");
-                None
-            }
+        if self.is_valid_va(va) {
+            Some(va)
         } else {
-            if va < self.base_address + self.data.len() as u32 {
-                Some(va)
-            } else {
-                warn!("failed to map {va:#x}: more than base addr and more than data len");
-                None
-            }
+            warn!("failed to map {va:#x}: out of binary range");
+            None
         }
     }
 

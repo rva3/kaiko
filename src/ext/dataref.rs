@@ -28,9 +28,10 @@ impl DataRefExt for Opcode {
 
 pub fn a32_ldr_data(data: &[u8], op: Opcode) -> Option<u32> {
     // set correct bounds
-    let data = &data[..op.load_size()];
+    let size = op.load_size();
+    let data = data.get(..size)?;
 
-    match op.load_size() {
+    match size {
         1 => {
             let v = u8::from_le_bytes(data.try_into().unwrap());
             if op.is_signed_load() {

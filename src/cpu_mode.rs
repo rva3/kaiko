@@ -1,6 +1,6 @@
 use std::ops::Not;
 
-use yaxpeax_arm::armv7::Opcode;
+use yaxpeax_arm::armv7::{Opcode, Operand};
 
 use crate::Code;
 
@@ -27,10 +27,12 @@ impl CpuMode {
             CpuMode::Thumb
         } else {
             let v = Self::from(code);
-            if matches!(code.instruction.opcode, Opcode::BX | Opcode::BLX) {
-                !v
-            } else {
-                v
+            match code.instruction.opcode {
+                // BLX unconditionally exchanges instruction set
+                // BX, BLX, LDR PC use bit 0 of target address
+                Opcode::BLX if !matches!(code.instruction.operands[0], Operand::Reg(_)) => !v,
+                Opcode::BX | Opcode::BLX | Opcode::LDR => CpuMode::Arm,
+                _ => v,
             }
         }
     }

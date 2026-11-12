@@ -3,7 +3,9 @@
 use std::fmt::Display;
 
 use memchr::memmem;
-use tracing::{debug, info, warn};
+#[cfg(feature = "unchecked")]
+use tracing::warn;
+use tracing::{debug, info};
 
 use crate::{
     cpu_mode::CpuMode,
@@ -160,7 +162,8 @@ impl Analyzer {
     #[must_use]
     pub fn read_bytes(&self, va: u32, len: u32) -> Option<&[u8]> {
         let offset = self.unmap_va(va)?;
-        self.metadata.data.get(offset..offset + len as usize)
+        let end = offset.checked_add(len as usize)?;
+        self.metadata.data.get(offset..end)
     }
 
     /// read LE u32
@@ -286,11 +289,9 @@ impl Analyzer {
     /// `None` if `offset` cannot be mapped (bigger than max binary size)
     #[must_use]
     pub fn map_va(&self, offset: usize) -> Option<u32> {
-        let offset = offset as u32;
-        if offset < self.metadata.base_address
-            && offset < self.metadata.base_address + self.metadata.data.len() as u32
-        {
-            Some(self.metadata.base_address + offset)
+        let offset = u32::try_from(offset).ok()?;
+        if (offset as usize) < self.metadata.data.len() {
+            self.metadata.base_address.checked_add(offset)
         } else {
             None
         }
@@ -301,10 +302,9 @@ impl Analyzer {
     /// `None` if `va` cannot be unmapped (out of bounds of `[base_addr; base_addr + data.len())`)
     #[must_use]
     pub fn unmap_va(&self, va: u32) -> Option<usize> {
-        if va >= self.metadata.base_address
-            && va < self.metadata.base_address + self.metadata.data.len() as u32
-        {
-            Some((va - self.metadata.base_address) as usize)
+        let offset = va.checked_sub(self.metadata.base_address)? as usize;
+        if offset < self.metadata.data.len() {
+            Some(offset)
         } else {
             None
         }
