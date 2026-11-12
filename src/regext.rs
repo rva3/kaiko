@@ -7,13 +7,14 @@ pub trait RegExt {
 }
 
 pub trait RegListExt {
+    fn has_sp(&self) -> bool;
     fn has_lr(&self) -> bool;
     fn has_pc(&self) -> bool;
 }
 
 impl RegExt for Reg {
     fn is_sp(&self) -> bool {
-        self.number() == 14
+        self.number() == 13
     }
 
     fn is_lr(&self) -> bool {
@@ -26,6 +27,10 @@ impl RegExt for Reg {
 }
 
 impl RegListExt for u16 {
+    fn has_sp(&self) -> bool {
+        (self & (1 << 13)) != 0
+    }
+
     fn has_lr(&self) -> bool {
         (self & (1 << 14)) != 0
     }
