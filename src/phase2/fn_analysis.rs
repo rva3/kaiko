@@ -21,7 +21,8 @@ impl FnAnalysis {
                 continue;
             }
 
-            debug!("function at {:#x}", block.start_va());
+            let fn_start_va = block.start_va();
+            debug!("function at {fn_start_va:#x}");
 
             // if it was tail call, clear all predecessors
             block.predecessors.clear();
@@ -49,6 +50,9 @@ impl FnAnalysis {
 
                 if let Some(current_block) = metadata.blocks.get(current_idx) {
                     for &successor_va in &current_block.successors {
+                        if metadata.branch.is_fn(successor_va) && successor_va != fn_start_va {
+                            continue;
+                        }
                         if let Some(&idx) = va2idx.get(&successor_va) {
                             queue.push(idx);
                         } else {
