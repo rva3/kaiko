@@ -53,6 +53,10 @@ impl BranchAnalysis {
         }
     }
 
+    fn push_rev_jump_unchecked(&mut self, target: u32, me: u32, ty: EdgeType) {
+        self.rev_jumps.entry(target).or_default().push((me, ty));
+    }
+
     fn push_rev_jump(&mut self, target: u32, me: u32, ty: EdgeType) {
         let entry = self.rev_jumps.entry(target).or_default();
         if !entry.iter().any(|(c, t)| *c == me && *t == ty) {
@@ -60,96 +64,110 @@ impl BranchAnalysis {
         }
     }
 
-    fn remove_jump_only(&mut self, va: u32) {
+    fn remove_rev_jumps(&mut self, va: u32, old: JumpType) {
         let mut do_discard = |t: u32| {
             if let Some(callers) = self.rev_jumps.get_mut(&t) {
                 callers.retain(|(caller_va, ty)| *caller_va != va || *ty == EdgeType::Fallthrough);
             }
         };
 
+        match old {
+            JumpType::DirectCall(t) | JumpType::DirectJump(t) => do_discard(t),
+            JumpType::Branch {
+                target,
+                fallthrough,
+            } => {
+                do_discard(target);
+                do_discard(fallthrough);
+            }
+            JumpType::Table(idx) => {
+                let items = std::mem::take(&mut self.jump_tables[idx]);
+                items.into_iter().for_each(|t| do_discard(t));
+            }
+            _ => (),
+        };
+    }
+
+    fn remove_jump_only(&mut self, va: u32) {
         if let Some(ty) = self.jumps.remove(&va) {
-            match ty {
-                JumpType::DirectCall(t) | JumpType::DirectJump(t) => do_discard(t),
-                JumpType::Branch {
-                    target,
-                    fallthrough,
-                } => {
-                    do_discard(target);
-                    do_discard(fallthrough);
-                }
-                JumpType::Table(idx) => {
-                    let items = std::mem::take(&mut self.jump_tables[idx]);
-                    items.into_iter().for_each(|t| do_discard(t));
-                }
-                _ => (),
-            };
+            self.remove_rev_jumps(va, ty);
         }
     }
 
     /// mark `target` as fallthrough after call instruction at `me`
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target)), level = "trace")]
     pub fn mark_as_fallthrough(&mut self, me: u32, target: u32) {
-        if let Some(old) = self.fallthroughs.insert(me, target)
-            && old != target
-            && let Some(callers) = self.rev_jumps.get_mut(&old)
-        {
-            callers.retain(|(caller_va, ty)| *caller_va != me || *ty != EdgeType::Fallthrough);
+        if let Some(old) = self.fallthroughs.insert(me, target) {
+            if old == target {
+                return;
+            }
+            if let Some(callers) = self.rev_jumps.get_mut(&old) {
+                callers.retain(|(caller_va, ty)| *caller_va != me || *ty != EdgeType::Fallthrough);
+            }
         }
-        self.push_rev_jump(target, me, EdgeType::Fallthrough);
+        self.push_rev_jump_unchecked(target, me, EdgeType::Fallthrough);
     }
 
     /// mark `target` as function call with `me` as caller VA
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target)), level = "trace")]
     pub fn mark_as_direct_call(&mut self, me: u32, target: u32) {
-        self.remove_jump_only(me);
-        self.jumps.insert(me, JumpType::DirectCall(target));
-        self.push_rev_jump(target, me, EdgeType::Call);
+        if let Some(old) = self.jumps.insert(me, JumpType::DirectCall(target)) {
+            self.remove_rev_jumps(me, old);
+        }
+        self.push_rev_jump_unchecked(target, me, EdgeType::Call);
     }
 
     /// mark `target` as function call with `me` as caller VA
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me)), level = "trace")]
     pub fn mark_as_indirect_call(&mut self, me: u32, reg: Reg) {
-        self.remove_jump_only(me);
-        self.jumps.insert(me, JumpType::IndirectCall(reg));
+        if let Some(old) = self.jumps.insert(me, JumpType::IndirectCall(reg)) {
+            self.remove_rev_jumps(me, old);
+        }
     }
 
     /// mark `target` as direct jump with `me` as jump instruction VA
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target)), level = "trace")]
     pub fn mark_as_direct_jump(&mut self, me: u32, target: u32) {
-        self.remove_jump_only(me);
-        self.jumps.insert(me, JumpType::DirectJump(target));
-        self.push_rev_jump(target, me, EdgeType::Jump);
+        if let Some(old) = self.jumps.insert(me, JumpType::DirectJump(target)) {
+            self.remove_rev_jumps(me, old);
+        }
+        self.push_rev_jump_unchecked(target, me, EdgeType::Jump);
     }
 
     /// mark `target` as indirect jump with `me` as jump instruction VA
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me)), level = "trace")]
     pub fn mark_as_indirect_jump(&mut self, me: u32, reg: Reg) {
-        self.remove_jump_only(me);
-        self.jumps.insert(me, JumpType::IndirectJump(reg));
+        if let Some(old) = self.jumps.insert(me, JumpType::IndirectJump(reg)) {
+            self.remove_rev_jumps(me, old);
+        }
     }
 
     /// mark `target` as branch target arm with `me` as branch instruction VA
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me), target = format_args!("{:#x}", target), fallthrough = format_args!("{:#x}", fallthrough)), level = "trace")]
     pub fn mark_as_branch(&mut self, me: u32, target: u32, fallthrough: u32) {
-        self.remove_jump_only(me);
-        self.jumps.insert(
+        if let Some(old) = self.jumps.insert(
             me,
             JumpType::Branch {
                 target,
                 fallthrough,
             },
-        );
-        self.push_rev_jump(target, me, EdgeType::Branch);
-        self.push_rev_jump(fallthrough, me, EdgeType::Branch);
+        ) {
+            self.remove_rev_jumps(me, old);
+        }
+        self.push_rev_jump_unchecked(target, me, EdgeType::Branch);
+        if fallthrough != target {
+            self.push_rev_jump_unchecked(fallthrough, me, EdgeType::Branch);
+        }
     }
 
     /// mark `target` as jump table with `me` as base
     #[instrument(skip(self), fields(me = format_args!("{:#x}", me)), level = "trace")]
     pub fn mark_as_table(&mut self, me: u32, targets: &[u32]) {
-        self.remove_jump_only(me);
         let idx = self.jump_tables.len();
         self.jump_tables.push(SmallVec::from_slice(targets));
-        self.jumps.insert(me, JumpType::Table(idx));
+        if let Some(old) = self.jumps.insert(me, JumpType::Table(idx)) {
+            self.remove_rev_jumps(me, old);
+        }
 
         for &target in targets {
             self.push_rev_jump(target, me, EdgeType::Table);
