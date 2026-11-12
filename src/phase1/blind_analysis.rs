@@ -32,15 +32,35 @@ impl BlindAnalysis {
 
         let mut fns = Vec::new();
         let mut va = min_exec_va;
+        let mut blocks = metadata.blocks.values();
+        let mut cur_block = blocks.next();
 
         while va < max_exec_va {
+            while let Some(b) = cur_block {
+                if va < b.start_va() {
+                    break;
+                }
+                let b_end = b.end_va()
+                    + metadata
+                        .bin
+                        .get(&b.end_va())
+                        .expect("block end instruction must exist")
+                        .instruction
+                        .len()
+                        .to_const();
+                if va < b_end {
+                    trace!("existing block at {va:#x}..{b_end:#x}");
+                    va = b_end;
+                }
+                cur_block = blocks.next();
+            }
+            if va >= max_exec_va {
+                break;
+            }
+
             trace!("try {va:#x}");
 
-            if let Some(code) = metadata.code_covering(va) {
-                trace!("existing code at {va:#x}");
-                va = code.va + code.instruction.len().to_const();
-                continue;
-            } else if literal_blacklist.contains_key(&va) || metadata.slots.contains(&va) {
+            if literal_blacklist.contains_key(&va) || metadata.slots.contains(&va) {
                 trace!("literal at {va:#x}");
                 va += 4;
                 continue;
