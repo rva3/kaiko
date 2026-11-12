@@ -69,7 +69,7 @@ impl IndirectFnAnalysis {
             Opcode::PUSH => {
                 if let Operand::Reg(r) = code.instruction.operands[0] {
                     r.is_lr()
-                } else if let Operand::RegList(r) = code.instruction.operands[1] {
+                } else if let Operand::RegList(r) = code.instruction.operands[0] {
                     r.has_lr()
                 } else {
                     false
