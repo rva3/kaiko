@@ -1,3 +1,4 @@
+use ahash::AHashSet;
 use tracing::{debug, instrument, trace};
 use yaxpeax_arm::armv7::{Opcode, Operand};
 
@@ -11,56 +12,81 @@ use crate::{
     regext::{RegExt, RegListExt},
 };
 
-pub struct IndirectFnAnalysis;
+pub struct IndirectFnAnalysis {
+    checked: AHashSet<u32>,
+}
+
 impl IndirectFnAnalysis {
+    pub fn new() -> Self {
+        Self {
+            checked: AHashSet::new(),
+        }
+    }
+
     /// detect functions in the raw literals
-    #[instrument(skip(metadata), level = "trace")]
-    pub fn fns(metadata: &Metadata) -> Vec<(u32, CpuMode)> {
-        metadata
-            .refs
-            .iter()
-            // i. hate. references. for. primitives.
-            .filter(|(_, va)| !metadata.bin.contains_key(&(*va & !1)))
-            .filter_map(|(_, va)| -> Option<(u32, CpuMode)> {
-                trace!("try {va}");
-                // in binary range
-                if *va >= metadata.base_address
-                    && *va < metadata.base_address + metadata.data.len() as u32
-                {
-                    trace!("bounds check passed");
+    #[instrument(skip(self, metadata), level = "trace")]
+    pub fn fns(&mut self, metadata: &Metadata) -> Vec<(u32, CpuMode)> {
+        let mut out = Vec::new();
 
-                    let is_thumb = va & 1 != 0;
-                    let va = va & !1;
+        for &raw_va in metadata.refs.values() {
+            let is_thumb = raw_va & 1 != 0;
+            let va = raw_va & !1;
 
-                    let off = (va - metadata.base_address) as usize;
-                    let bytes = &metadata.data[off..off + 4];
+            if !is_thumb && (va & 3) != 0 {
+                continue;
+            }
 
-                    let (mode, code) = if is_thumb {
-                        trace!("T bit is set");
-                        (CpuMode::Thumb, disassemble_thumb_oneshot(bytes).ok()?)
-                    } else {
-                        trace!("T bit is NOT set");
-                        (CpuMode::Arm, disassemble_arm_oneshot(bytes).ok()?)
-                    };
+            if !self.checked.insert(va) {
+                continue;
+            }
 
-                    if Self::maybe_prologue(&code) && !Self::maybe_str(bytes) {
-                        debug!("data at {va:#x} is likely a fn");
-                        Some((va, mode))
-                    } else {
-                        debug!("data at {va:#x} is not fn:");
-                        if !Self::maybe_prologue(&code) {
-                            trace!("not prologue");
-                        }
-                        if Self::maybe_str(bytes) {
-                            trace!("is a string");
-                        }
-                        None
-                    }
-                } else {
-                    None
+            if metadata.blocks.contains_key(&va)
+                || metadata.code_covering(va).is_some()
+                || metadata.slots.contains(&va)
+            {
+                continue;
+            }
+
+            trace!("try {raw_va:#x}");
+            let Some(off) = metadata.unmap_va(va) else {
+                continue;
+            };
+            let Some(bytes) = metadata.data.get(off..off + 4) else {
+                continue;
+            };
+            trace!("bounds check passed");
+
+            let decoded = if is_thumb {
+                trace!("T bit is set");
+                disassemble_thumb_oneshot(bytes)
+                    .ok()
+                    .map(|c| (CpuMode::Thumb, c))
+            } else {
+                trace!("T bit is NOT set");
+                disassemble_arm_oneshot(bytes)
+                    .ok()
+                    .map(|c| (CpuMode::Arm, c))
+            };
+
+            let Some((mode, code)) = decoded else {
+                continue;
+            };
+
+            if Self::maybe_prologue(&code) && !Self::maybe_str(bytes) {
+                debug!("data at {va:#x} is likely a fn");
+                out.push((va, mode));
+            } else {
+                debug!("data at {va:#x} is not fn:");
+                if !Self::maybe_prologue(&code) {
+                    trace!("not prologue");
                 }
-            })
-            .collect()
+                if Self::maybe_str(bytes) {
+                    trace!("is a string");
+                }
+            }
+        }
+
+        out
     }
 
     /// prologue junk filter
@@ -102,6 +128,6 @@ impl IndirectFnAnalysis {
 
     /// str literal junk filter
     fn maybe_str(b: &[u8]) -> bool {
-        b.iter().filter(|c| c.is_ascii()).count() >= 4
+        b.iter().all(|c| c.is_ascii_graphic() || *c == b' ')
     }
 }

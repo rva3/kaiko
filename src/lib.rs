@@ -94,6 +94,8 @@ impl Analyzer {
         let mut metadata = P1Metadata::new(data, base_address);
         let mut analyzer = AsmAnalysis::new();
         let mut indirect = IndirectAnalysis::new();
+        let mut indirect_fns_analyzer = IndirectFnAnalysis::new();
+        let mut candidate_fns = Vec::new();
 
         analyzer.enqueue_va(&mut metadata, base_address + entry_offset, entry_mode);
         metadata
@@ -111,13 +113,14 @@ impl Analyzer {
                 .self_test(&metadata)
                 .inspect(|()| debug!("phase 1: self-test passed"))?;
             let jumps = indirect.resolve_register_state(&mut metadata);
-            let indirect_fns = IndirectFnAnalysis::fns(&metadata);
+            let indirect_fns = indirect_fns_analyzer.fns(&metadata);
 
             if indirect.queue.is_empty() && jumps.is_empty() && indirect_fns.is_empty() {
                 if blind_scan_ran {
                     break;
                 } else {
                     for (va, mode) in BlindAnalysis::find_fns(&metadata) {
+                        candidate_fns.push(va);
                         analyzer.enqueue_va(&mut metadata, va, mode);
                     }
 
@@ -131,7 +134,14 @@ impl Analyzer {
             }
 
             for (va, mode) in indirect_fns {
+                candidate_fns.push(va);
                 analyzer.enqueue_va(&mut metadata, va, mode);
+            }
+        }
+
+        for va in candidate_fns {
+            if metadata.blocks.contains_key(&va) {
+                metadata.branch.mark_as_fn(va);
             }
         }
 
