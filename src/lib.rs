@@ -106,12 +106,6 @@ impl Analyzer {
         loop {
             analyzer.process_queue(&mut metadata)?;
 
-            #[cfg(feature = "unchecked")]
-            warn!("self-test is disabled");
-            #[cfg(not(feature = "unchecked"))]
-            analyzer
-                .self_test(&metadata)
-                .inspect(|()| debug!("phase 1: self-test passed"))?;
             let jumps = indirect.resolve_register_state(&mut metadata);
             let indirect_fns = indirect_fns_analyzer.fns(&metadata);
 
@@ -138,6 +132,13 @@ impl Analyzer {
                 analyzer.enqueue_va(&mut metadata, va, mode);
             }
         }
+
+        #[cfg(feature = "unchecked")]
+        warn!("self-test is disabled");
+        #[cfg(not(feature = "unchecked"))]
+        analyzer
+            .self_test(&metadata)
+            .inspect(|()| debug!("phase 1: self-test passed"))?;
 
         for va in candidate_fns {
             if metadata.blocks.contains_key(&va) {
