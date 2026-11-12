@@ -85,32 +85,43 @@ impl AsmAnalysis {
             }
         };
 
-        for code in metadata.bin.values() {
-            if matches!(
-                code.instruction.opcode,
-                Opcode::B | Opcode::BX | Opcode::BL | Opcode::BLX
-            ) && let Some(target) = metadata.branch.jumps.get(&code.va)
-            {
-                match target {
-                    JumpType::DirectCall(va) | JumpType::DirectJump(va) => do_va_check(*va),
-                    JumpType::Branch {
-                        target,
-                        fallthrough,
-                    } => {
-                        do_va_check(*target)?;
-                        do_va_check(*fallthrough)
+        for target in metadata.branch.jumps.values() {
+            match target {
+                JumpType::DirectCall(va) | JumpType::DirectJump(va) => do_va_check(*va),
+                JumpType::Branch {
+                    target,
+                    fallthrough,
+                } => {
+                    do_va_check(*target)?;
+                    do_va_check(*fallthrough)
+                }
+                JumpType::Table(idx) => {
+                    for &t in &metadata.branch.jump_tables[*idx] {
+                        do_va_check(t)?;
                     }
-                    _ => Ok(()),
-                }?;
-            }
+                    Ok(())
+                }
+                JumpType::IndirectCall(_) | JumpType::IndirectJump(_) => Ok(()),
+            }?;
+        }
+        for &ft in metadata.branch.fallthroughs.values() {
+            do_va_check(ft)?;
         }
         Ok(())
     }
 
     /// ensure basic block at `va` is being split
     fn ensure_split(&self, metadata: &mut Metadata, va: u32) {
+        if !metadata.bin.contains_key(&va) {
+            return;
+        }
+
         // get the start va from range
-        if let Some((start_va, block)) = metadata.blocks.range(..=va).next_back().map(|(va, block)| (*va, block))
+        if let Some((start_va, block)) = metadata
+            .blocks
+            .range(..=va)
+            .next_back()
+            .map(|(va, block)| (*va, block))
             // check if we actually need splitting
             && block.contains_va(va)
             && start_va != va
@@ -127,9 +138,19 @@ impl AsmAnalysis {
                 let new_block = BasicBlock::new(va..=old_end, mode);
                 metadata.blocks.insert(va, new_block);
 
-                if !metadata.branch.jumps.contains_key(&prev_va) {
-                    trace!("marking implicit fallthrough jump from {prev_va:#x} to {va:#x}");
-                    metadata.branch.mark_as_direct_jump(prev_va, va);
+                match metadata.branch.jumps.get(&prev_va) {
+                    Some(
+                        crate::phase1::branch_analysis::JumpType::DirectCall(_)
+                        | crate::phase1::branch_analysis::JumpType::IndirectCall(_),
+                    ) => {
+                        trace!("marking call fallthrough from {prev_va:#x} to {va:#x}");
+                        metadata.branch.mark_as_fallthrough(prev_va, va);
+                    }
+                    None => {
+                        trace!("marking implicit fallthrough jump from {prev_va:#x} to {va:#x}");
+                        metadata.branch.mark_as_direct_jump(prev_va, va);
+                    }
+                    _ => (),
                 }
             } else {
                 unreachable!("previous instruction must be available");
@@ -137,25 +158,43 @@ impl AsmAnalysis {
         }
     }
 
-    /// add `va` to the internal queue with `mode`
+    /// add `va` to the internal queue with `mode`, returning `false` if invalid or mid-instruction
     #[instrument(skip(self, metadata), fields(va = format_args!("{:#x}", va)), level = "trace")]
-    pub fn enqueue_va(&mut self, metadata: &mut Metadata, va: u32, mode: CpuMode) {
+    pub fn enqueue_va(&mut self, metadata: &mut Metadata, va: u32, mode: CpuMode) -> bool {
+        if !metadata.is_valid_va(va) {
+            debug!("{va:#x} out of bounds, ignore");
+            return false;
+        }
+
         // is there a block which has `va` as start?
         if metadata.blocks.contains_key(&va) {
             // then everything is done
             debug!("{va:#x} already processed and exists as block start, no need to split");
-            return;
+            return true;
         }
 
-        self.ensure_split(metadata, va);
-
-        if metadata.bin.contains_key(&va) {
-            debug!("{va:#x} already processed");
-            return;
+        if let Some(c) = metadata.code_covering(va) {
+            if c.va == va {
+                self.ensure_split(metadata, va);
+                debug!("{va:#x} already processed");
+                return true;
+            } else {
+                debug!("{va:#x} falls inside existing instruction at {:#x}, ignore", c.va);
+                return false;
+            }
         }
 
         debug!("added {va:#x} to queue");
         self.queue.push((va, mode));
+        true
+    }
+
+    fn discard_callers(metadata: &mut Metadata, va: u32) {
+        let callers: SmallVec<[u32; 4]> = metadata.branch.all_for(va).collect();
+        for caller_va in callers {
+            debug!("discard caller at {caller_va:#x} targeting {va:#x}");
+            metadata.branch.discard(caller_va);
+        }
     }
 
     /// process `start_va` from the queue with `mode` until terminator is hit
@@ -171,10 +210,30 @@ impl AsmAnalysis {
         let mut last_va = start_va;
 
         loop {
-            if va != start_va && metadata.bin.contains_key(&va) {
-                debug!("{va:#x} already processed");
-                self.ensure_split(metadata, va);
-                metadata.branch.mark_as_direct_jump(last_va, va);
+            if let Some(c) = metadata.code_covering(va) {
+                if c.va == va {
+                    if va != start_va {
+                        debug!("{va:#x} already processed");
+                        self.ensure_split(metadata, va);
+                        match metadata.branch.jumps.get(&last_va) {
+                            Some(
+                                crate::phase1::branch_analysis::JumpType::DirectCall(_)
+                                | crate::phase1::branch_analysis::JumpType::IndirectCall(_),
+                            ) => metadata.branch.mark_as_fallthrough(last_va, va),
+                            _ => metadata.branch.mark_as_direct_jump(last_va, va),
+                        }
+                    } else {
+                        self.ensure_split(metadata, va);
+                    }
+                } else {
+                    debug!(
+                        "{va:#x} overlaps existing instruction at {:#x}, stop",
+                        c.va
+                    );
+                    if va == start_va {
+                        Self::discard_callers(metadata, va);
+                    }
+                }
                 break;
             }
 
@@ -183,26 +242,30 @@ impl AsmAnalysis {
                 && block.contains_va(va)
             {
                 debug!("{va:#x} overlaps with {:#x?}, stop", block.range);
+                if va == start_va {
+                    Self::discard_callers(metadata, va);
+                }
                 break;
             }
 
-            let offset = va.wrapping_sub(metadata.base_address) as usize;
-            let Some(data) = metadata.data.get(offset..offset + 4) else {
+            let min_len = if mode == CpuMode::Arm { 4 } else { 2 };
+            let Some(offset) = metadata.unmap_va(va) else {
                 warn!("{va:#x} out of bounds, abort analysis for the {start_va:#x} entry");
                 metadata.branch.discard(va);
-
-                // also drop caller who queued this instruction
-                let mut iter = metadata.branch.all_for(va);
-                if let Some(va) = iter.next() {
-                    debug!("drop caller at {va:#x}");
-                    let die = iter.next().is_some();
-                    drop(iter);
-
-                    metadata.branch.discard(va);
-
-                    if die {
-                        todo!("more than one invalid caller for {va:#x}. the CFG is really broken");
-                    }
+                if va == start_va {
+                    Self::discard_callers(metadata, va);
+                }
+                break;
+            };
+            let Some(data) = metadata
+                .data
+                .get(offset..(offset + 4).min(metadata.data.len()))
+                .filter(|s| s.len() >= min_len)
+            else {
+                warn!("{va:#x} out of bounds, abort analysis for the {start_va:#x} entry");
+                metadata.branch.discard(va);
+                if va == start_va {
+                    Self::discard_callers(metadata, va);
                 }
                 break;
             };
@@ -213,17 +276,9 @@ impl AsmAnalysis {
                     code
                 }
                 Err(e) => {
-                    // disconnect this block from others
-                    let mut todiscard = SmallVec::<[u32; 4]>::new();
-                    for caller_va in metadata.branch.all_for(va) {
-                        todiscard.push(caller_va);
-                    }
-                    for caller_va in todiscard {
-                        debug!("discard {caller_va:#x}");
-                        metadata.branch.discard(caller_va);
-                    }
                     // this is debug because we don't track any literal pools or noreturns, so falling into garbage is possible
                     debug!("disassembler error at {va:#x}: {e:?} (data: {data:#04x?})");
+                    Self::discard_callers(metadata, va);
                     break;
                 }
             };
@@ -236,16 +291,27 @@ impl AsmAnalysis {
                 break;
             }
 
+            let next_va = va + code.instruction.len().to_const();
+            if metadata.bin.range(va..next_va).next().is_some()
+                || metadata.blocks.range(va..next_va).next().is_some()
+            {
+                debug!("{va:#x}..{next_va:#x} overlaps existing instruction, stop");
+                if va == start_va {
+                    Self::discard_callers(metadata, va);
+                }
+                break;
+            }
+
             trace!(
                 "new instuction: {code} ({:?} {:?})",
                 code.instruction.opcode, code.instruction.operands
             );
 
             last_va = va;
-            let next_va = va + code.instruction.len().to_const();
 
             // this is awful, but clone is even worse, right?
             let mut stop = false;
+            let is_cond = code.instruction.condition != ConditionCode::AL;
 
             match code.instruction.opcode {
                 Opcode::PUSH => {
@@ -267,13 +333,19 @@ impl AsmAnalysis {
                     if let Some(target) = Self::branch_map_imm(&code, target_op) {
                         // B/CBZ/CBNZ never change mode, passing just target is fine
                         Self::sanity_check_va_align(target)?;
-                        self.enqueue_va(metadata, target, mode);
+                        let target_ok = self.enqueue_va(metadata, target, mode);
 
                         // conditional B or CBZ/CBNZ have the next arm
-                        if code.instruction.condition != ConditionCode::AL || is_cbz_cbnz {
-                            self.enqueue_va(metadata, next_va, mode);
-                            metadata.branch.mark_as_branch(code.va, target, next_va);
-                        } else {
+                        if is_cond || is_cbz_cbnz {
+                            let ft_ok = self.enqueue_va(metadata, next_va, mode);
+                            if target_ok && ft_ok {
+                                metadata.branch.mark_as_branch(code.va, target, next_va);
+                            } else if ft_ok {
+                                metadata.branch.mark_as_direct_jump(code.va, next_va);
+                            } else if target_ok {
+                                metadata.branch.mark_as_direct_jump(code.va, target);
+                            }
+                        } else if target_ok {
                             metadata.branch.mark_as_direct_jump(code.va, target);
                         }
                     } else {
@@ -286,16 +358,36 @@ impl AsmAnalysis {
                     if let Operand::Reg(r) = code.instruction.operands[0] {
                         if r.is_pc() {
                             // BX PC is a bit weird, but basically means mode switch. though it's another function, so we can call it a thunk
-                            self.enqueue_va(metadata, code.pc(), !mode);
-                            metadata.branch.mark_as_direct_jump(code.va, code.pc());
-                        } else if !r.is_lr() {
-                            metadata.branch.mark_as_indirect_jump(code.va, r);
+                            let target_ok = self.enqueue_va(metadata, code.pc(), !mode);
+                            if is_cond {
+                                let ft_ok = self.enqueue_va(metadata, next_va, mode);
+                                if target_ok && ft_ok {
+                                    metadata.branch.mark_as_branch(code.va, code.pc(), next_va);
+                                } else if ft_ok {
+                                    metadata.branch.mark_as_direct_jump(code.va, next_va);
+                                } else if target_ok {
+                                    metadata.branch.mark_as_direct_jump(code.va, code.pc());
+                                }
+                            } else if target_ok {
+                                metadata.branch.mark_as_direct_jump(code.va, code.pc());
+                            }
+                        } else {
+                            if !r.is_lr() {
+                                metadata.branch.mark_as_indirect_jump(code.va, r);
+                            }
+                            if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                                if r.is_lr() {
+                                    metadata.branch.mark_as_direct_jump(code.va, next_va);
+                                } else {
+                                    metadata.branch.mark_as_fallthrough(code.va, next_va);
+                                }
+                            }
                         }
                     } else {
                         unreachable!("BX can't have non-reg operand (code: {code})");
                     }
 
-                    // any BX is block termination
+                    // any BX terminates the current block (with fallthrough queued if conditional)
                     stop = true;
                 }
                 Opcode::BL | Opcode::BLX => {
@@ -305,20 +397,33 @@ impl AsmAnalysis {
                         let next_mode = CpuMode::from_code_and_va(&code, target);
                         let next_target = mode.align_va_on_switch(&next_mode, target);
 
-                        self.enqueue_va(metadata, next_target, next_mode);
-                        metadata.branch.mark_as_direct_call(code.va, next_target);
+                        if self.enqueue_va(metadata, next_target, next_mode) {
+                            metadata.branch.mark_as_direct_call(code.va, next_target);
+                        }
                     } else if let Operand::Reg(r) = code.instruction.operands[0] {
                         metadata.branch.mark_as_indirect_call(code.va, r);
                     }
                 }
                 Opcode::POP => {
-                    if let Operand::RegList(list) = code.instruction.operands[0]
+                    let writes_pc = match code.instruction.operands[0] {
+                        Operand::RegList(list) => list.has_pc(),
+                        Operand::Reg(r) => r.is_pc(),
+                        _ => false,
+                    };
+                    if writes_pc {
+                        if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                            metadata.branch.mark_as_direct_jump(code.va, next_va);
+                        }
+                        stop = true;
+                    }
+                }
+                Opcode::LDM(..) => {
+                    if let Operand::RegList(list) = code.instruction.operands[1]
                         && list.has_pc()
                     {
-                        stop = true;
-                    } else if let Operand::Reg(r) = code.instruction.operands[0]
-                        && r.is_pc()
-                    {
+                        if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                            metadata.branch.mark_as_direct_jump(code.va, next_va);
+                        }
                         stop = true;
                     }
                 }
@@ -326,156 +431,205 @@ impl AsmAnalysis {
                     stop = true;
                 }
                 Opcode::TBB => {
-                    if let Operand::RegDerefPreindexReg(r_should_be_pc, r, _, _) =
+                    if let Operand::RegDerefPreindexReg(base, r, _, _) =
                         code.instruction.operands[0]
-                        && r_should_be_pc.is_pc()
                     {
-                        self.table_expand(metadata, code.va, mode, r, code.pc(), None, 1);
+                        if base.is_pc() {
+                            self.table_expand(
+                                metadata,
+                                &bin,
+                                code.va,
+                                mode,
+                                r,
+                                code.pc(),
+                                None,
+                                1,
+                            );
+                        }
                     } else {
-                        unreachable!("bad jumptable at {code}: {:?}", code.instruction.operands);
+                        warn!("unexpected TBB operands at {code}: {:?}", code.instruction.operands);
                     }
 
-                    // stop because TBB [PC, Rn] means the jump targets will be right
-                    // after this instruction
+                    if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                        metadata.branch.mark_as_fallthrough(code.va, next_va);
+                    }
                     stop = true;
                 }
                 Opcode::TBH => {
-                    if let Operand::RegDerefPreindexRegShift(r_should_be_pc, shift, _, _) =
+                    if let Operand::RegDerefPreindexRegShift(base, shift, _, _) =
                         code.instruction.operands[0]
-                        && r_should_be_pc.is_pc()
                     {
-                        let r = match shift.into_shift() {
-                            RegShiftStyle::RegImm(ris) => {
-                                if ris.imm() != 1 || ris.stype() != ShiftStyle::LSL {
-                                    unreachable!("bad shift value (code: {code})");
-                                }
-                                ris.shiftee()
-                            }
-                            _ => unreachable!("bad shift for jump table (code: {code})"),
-                        };
-
-                        self.table_expand(metadata, code.va, mode, r, code.pc(), None, 2);
+                        if base.is_pc()
+                            && let RegShiftStyle::RegImm(ris) = shift.into_shift()
+                            && ris.imm() == 1
+                            && ris.stype() == ShiftStyle::LSL
+                        {
+                            self.table_expand(
+                                metadata,
+                                &bin,
+                                code.va,
+                                mode,
+                                ris.shiftee(),
+                                code.pc(),
+                                None,
+                                2,
+                            );
+                        }
                     } else {
-                        unreachable!("bad jumptable at {code}: {:?}", code.instruction.operands);
+                        warn!("unexpected TBH operands at {code}: {:?}", code.instruction.operands);
                     }
 
-                    // same as TBB
+                    if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                        metadata.branch.mark_as_fallthrough(code.va, next_va);
+                    }
                     stop = true;
                 }
                 Opcode::LDR => {
-                    if let Operand::Reg(rt) = code.instruction.operands[0]
-                        && let Operand::RegDerefPreindexOffset(r, imm, up, _) =
+                    if let Operand::Reg(rt) = code.instruction.operands[0] {
+                        if let Operand::RegDerefPreindexOffset(r, imm, up, _) =
                             code.instruction.operands[1]
-                        && r.is_pc()
-                    {
-                        let pc = if mode == CpuMode::Thumb {
-                            code.pc() & !3
-                        } else {
-                            code.pc()
-                        };
-
-                        let mut load = pc.wrapping_sub(metadata.base_address);
-
-                        load = if up {
-                            load.wrapping_add(imm as u32)
-                        } else {
-                            load.wrapping_sub(imm as u32)
-                        };
-
-                        if let Some(reg_val) =
-                            a32_ldr_data(&metadata.data[load as usize..], code.instruction.opcode)
+                            && r.is_pc()
                         {
-                            // jump
-                            if rt.is_pc() && imm == { if mode == CpuMode::Arm { 4 } else { 0 } } {
-                                if reg_val >= metadata.base_address
-                                    && reg_val < metadata.base_address + metadata.data.len() as u32
-                                {
-                                    let next_mode = CpuMode::from_code_and_va(&code, reg_val);
-                                    let next_va = mode.align_va_on_switch(&next_mode, reg_val);
-                                    self.enqueue_va(metadata, next_va, next_mode);
-
-                                    // i haven't seen any actual jump with LDR. it's mostly calls
-                                    metadata.branch.mark_as_direct_call(code.va, next_va);
-                                } else {
-                                    warn!("jumpout to {reg_val:#x} (at {code}), won't follow");
-                                }
-
-                                stop = true;
+                            let pc = if mode == CpuMode::Thumb {
+                                code.pc() & !3
                             } else {
-                                // XXX (low priority): slots ideally should track jumps too,
-                                // but this would trigger the check
-                                metadata.slots.insert(load + metadata.base_address);
-                                metadata.refs.insert(code.va, reg_val);
-                                metadata.rev_refs.entry(reg_val).or_default().push(code.va);
-                                trace!("add slot {:#x}", load + metadata.base_address);
-                                trace!("add {reg_val:#x} value for {va:#x}");
+                                code.pc()
+                            };
+
+                            let slot_va = if up {
+                                pc.wrapping_add(imm as u32)
+                            } else {
+                                pc.wrapping_sub(imm as u32)
+                            };
+
+                            if let Some(load) = metadata.unmap_va(slot_va)
+                                && let Some(slice) = metadata.data.get(load..)
+                                && let Some(reg_val) = a32_ldr_data(slice, code.instruction.opcode)
+                            {
+                                if rt.is_pc() {
+                                    if metadata.is_valid_va(reg_val & !1) {
+                                        let next_mode = CpuMode::from_code_and_va(&code, reg_val);
+                                        let next_target =
+                                            mode.align_va_on_switch(&next_mode, reg_val);
+                                        if self.enqueue_va(metadata, next_target, next_mode) {
+                                            metadata
+                                                .branch
+                                                .mark_as_direct_call(code.va, next_target);
+                                        }
+                                    } else {
+                                        warn!("jumpout to {reg_val:#x} (at {code}), won't follow");
+                                    }
+                                    metadata.slots.insert(slot_va);
+                                } else {
+                                    metadata.slots.insert(slot_va);
+                                    metadata.refs.insert(code.va, reg_val);
+                                    metadata.rev_refs.entry(reg_val).or_default().push(code.va);
+                                    trace!("add slot {slot_va:#x}");
+                                    trace!("add {reg_val:#x} value for {va:#x}");
+                                }
                             }
+                        }
+
+                        if rt.is_pc() {
+                            if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                                metadata.branch.mark_as_fallthrough(code.va, next_va);
+                            }
+                            stop = true;
                         }
                     }
                 }
                 Opcode::ADR => {
                     if let Operand::Imm32(imm) = code.instruction.operands[1] {
-                        let addr = code.va().wrapping_add(imm);
+                        let addr = (code.pc() & !3).wrapping_add(imm);
                         metadata.refs.insert(code.va, addr);
                         metadata.rev_refs.entry(addr).or_default().push(code.va);
                         trace!("add {addr:#x} to data refs");
                     } else {
-                        unreachable!("ADR can't have non-imm operand (code: {code})");
+                        warn!("unhandled ADR operands in {code}");
                     }
                 }
                 Opcode::MOV => {
                     if let Operand::Reg(rd) = code.instruction.operands[0]
                         && rd.is_pc()
                     {
-                        // MOV PC, LR is RET pseudo-instruction, non-LR values are just MOV PC, Rd
+                        if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                            metadata.branch.mark_as_direct_jump(code.va, next_va);
+                        }
                         stop = true;
                     }
                 }
-                Opcode::ADD => {
-                    // ADD Rn, PC is usually used in PIE binaries to fixup relative loads
-                    if let Operand::Reg(rn) = code.instruction.operands[0]
+                Opcode::ADD | Opcode::SUB => {
+                    let is_add = code.instruction.opcode == Opcode::ADD;
+                    if let Operand::Reg(rd) = code.instruction.operands[0]
+                        && rd.is_pc()
+                    {
+                        if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                            metadata.branch.mark_as_direct_jump(code.va, next_va);
+                        }
+                        stop = true;
+                    } else if let Operand::Reg(rn) = code.instruction.operands[0]
                         && let Operand::Reg(r_should_be_pc) = code.instruction.operands[1]
                         && r_should_be_pc.is_pc()
-                        // this is ADD Rn, PC, now look for LDR entry to fixup
-                        && let Some(ldr) = bin.iter().rev().find(|c| {
-                            if let Operand::Reg(r) = c.instruction.operands[0]
-                            && r == rn
-                            && let Operand::RegDerefPreindexOffset(r_should_be_pc, _, _, _) = c.instruction.operands[1] &&
-                            r_should_be_pc.is_pc() && c.instruction.opcode == Opcode::LDR {
-                                true
-                            } else {
-                                false
-                            }
-                        })
                     {
-                        debug!(
-                            "fixed ref originally created at {:#x} at {:#x}",
-                            ldr.va, code.va
-                        );
+                        if let Operand::Imm32(imm) = code.instruction.operands[2] {
+                            // Thumb-2 ADR.W is decoded by yaxpeax-arm as ADD/SUB Rd, PC, #imm
+                            let pc = code.pc() & !3;
+                            let addr = if is_add {
+                                pc.wrapping_add(imm)
+                            } else {
+                                pc.wrapping_sub(imm)
+                            };
+                            metadata.refs.insert(code.va, addr);
+                            metadata.rev_refs.entry(addr).or_default().push(code.va);
+                            trace!("add {addr:#x} to data refs (ADR.W)");
+                        } else if is_add
+                            && matches!(
+                                code.instruction.operands[2],
+                                Operand::Nothing | Operand::Reg(_)
+                            )
+                            // ADD Rn, PC is usually used in PIE binaries to fixup relative loads
+                            && let Some(ldr) = bin.iter().rev().find(|c| {
+                                if let Operand::Reg(r) = c.instruction.operands[0]
+                                    && r == rn
+                                    && let Operand::RegDerefPreindexOffset(r_should_be_pc, _, _, _) =
+                                        c.instruction.operands[1]
+                                    && r_should_be_pc.is_pc()
+                                    && c.instruction.opcode == Opcode::LDR
+                                {
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                            && let Some(&ldr_raw) = metadata.refs.get(&ldr.va)
+                        {
+                            debug!(
+                                "fixed ref originally created at {:#x} at {:#x}",
+                                ldr.va, code.va
+                            );
 
-                        // literal pool value
-                        let ldr_val =
-                            *metadata.refs.get(&ldr.va).expect("LDR entry must exist") as i32;
-                        debug!("LDR pool value: {ldr_val:#x}");
-                        let ldr_va = ldr_val.wrapping_add_unsigned(code.pc());
+                            let ldr_val = ldr_raw as i32;
+                            debug!("LDR pool value: {ldr_val:#x}");
+                            let ldr_va = ldr_val.wrapping_add_unsigned(code.pc());
 
-                        // fix LDR value
-                        metadata.refs.insert(ldr.va, ldr_val as u32);
-                        metadata.rev_refs.remove(&(ldr_val as u32));
-                        metadata
-                            .rev_refs
-                            .entry(ldr_val as u32)
-                            .or_default()
-                            .push(ldr.va);
-
-                        // add new entry because data referenced by the LDR is a literal itself
-                        metadata.refs.insert(code.va, ldr_va as u32);
-                        metadata
-                            .rev_refs
-                            .entry(ldr_va as u32)
-                            .or_default()
-                            .push(code.va);
-                        debug!("ADD value: {ldr_va:#x}");
+                            metadata.refs.insert(code.va, ldr_va as u32);
+                            metadata
+                                .rev_refs
+                                .entry(ldr_va as u32)
+                                .or_default()
+                                .push(code.va);
+                            debug!("ADD value: {ldr_va:#x}");
+                        }
+                    }
+                }
+                Opcode::ORR | Opcode::BIC | Opcode::MVN => {
+                    if let Operand::Reg(rd) = code.instruction.operands[0]
+                        && rd.is_pc()
+                    {
+                        if is_cond && self.enqueue_va(metadata, next_va, mode) {
+                            metadata.branch.mark_as_direct_jump(code.va, next_va);
+                        }
+                        stop = true;
                     }
                 }
                 _ => (),
@@ -571,14 +725,44 @@ impl AsmAnalysis {
                 }),
                 Err(e) => Err(Phase1Error::Disassembler(e)),
             },
-            CpuMode::Thumb => disassemble_thumb_oneshot(data).map_err(Into::into),
+            CpuMode::Thumb => match disassemble_thumb_oneshot(data) {
+                Ok(v) => Ok(v),
+                Err(yaxpeax_arm::armv7::DecodeError::Incomplete) if data.len() >= 2 => {
+                    let hw1 = u16::from_le_bytes([data[0], data[1]]);
+                    let is_wide = (hw1 >> 11) >= 0b11101;
+                    if is_wide && data.len() < 4 {
+                        return Err(Phase1Error::Disassembler(
+                            yaxpeax_arm::armv7::DecodeError::Incomplete,
+                        ));
+                    }
+                    Ok(Code {
+                        instruction: yaxpeax_arm::armv7::Instruction {
+                            condition: ConditionCode::AL,
+                            opcode: Opcode::NOP,
+                            operands: [
+                                Operand::Nothing,
+                                Operand::Nothing,
+                                Operand::Nothing,
+                                Operand::Nothing,
+                            ],
+                            s: false,
+                            wide: is_wide,
+                            thumb_w: false,
+                            thumb: true,
+                        },
+                        va: 0,
+                    })
+                }
+                Err(e) => Err(Phase1Error::Disassembler(e)),
+            },
         }
     }
 
-    /// crate jump table from given parameters
+    /// create jump table from given parameters
     fn table_expand(
         &mut self,
         metadata: &mut Metadata,
+        current_bin: &[Code],
         table_inst_va: u32,
         mode: CpuMode,
         table_target: Reg,
@@ -586,30 +770,58 @@ impl AsmAnalysis {
         table_size: Option<u32>,
         word_size: usize,
     ) {
-        let size = table_size.unwrap_or_else(|| {
-            // table size is in the previous block
-            metadata
-                .bin
-                .range(..table_inst_va)
+        let size = table_size.or_else(|| {
+            let mut branch_cond = None;
+            let iter = current_bin
+                .iter()
                 .rev()
-                .take(20)
-                .find_map(|(_, c)| {
-                    if c.instruction.opcode == Opcode::CMP
-                        && let Operand::Reg(r) = c.instruction.operands[0]
-                        && r == table_target
-                        && let Operand::Imm32(imm) = c.instruction.operands[1]
-                    {
-                        Some(imm)
-                    } else {
-                        None
-                    }
-                })
-                .expect("failed to determine table size :(")
+                .chain(metadata.bin.range(..table_inst_va).rev().map(|(_, c)| c))
+                .take(20);
+            for c in iter {
+                if c.instruction.opcode == Opcode::B
+                    && c.instruction.condition != ConditionCode::AL
+                    && branch_cond.is_none()
+                {
+                    branch_cond = Some(c.instruction.condition);
+                }
+                if c.instruction.opcode == Opcode::CMP
+                    && let Operand::Reg(r) = c.instruction.operands[0]
+                    && r == table_target
+                    && let Operand::Imm32(imm) = c.instruction.operands[1]
+                {
+                    let exclusive = matches!(
+                        branch_cond,
+                        Some(
+                            ConditionCode::HS
+                                | ConditionCode::GE
+                                | ConditionCode::LO
+                                | ConditionCode::LT
+                        )
+                    );
+                    return Some(if exclusive { imm } else { imm + 1 });
+                }
+            }
+            None
         });
+        let Some(size) = size else {
+            warn!("failed to determine table size at {table_inst_va:#x}");
+            return;
+        };
 
-        let offset = (table_start - metadata.base_address) as usize;
-        let targets = metadata.data[offset..offset + (size * word_size as u32) as usize]
-            .chunks(word_size)
+        let Some(offset) = metadata.unmap_va(table_start) else {
+            warn!("jump table start {table_start:#x} out of bounds");
+            return;
+        };
+        let Some(table_bytes_len) = (size as usize).checked_mul(word_size) else {
+            return;
+        };
+        let Some(table_slice) = metadata.data.get(offset..offset + table_bytes_len) else {
+            warn!("jump table at {table_inst_va:#x} exceeds binary bounds");
+            return;
+        };
+
+        let mut targets = table_slice
+            .chunks_exact(word_size)
             .map(|word| {
                 let branch_offset = match word_size {
                     1 => word[0] as u32,
@@ -622,17 +834,27 @@ impl AsmAnalysis {
                     // LDR jumps are absolute
                     branch_offset
                 } else {
-                    // TBB/TBH are not
-                    table_start + (2 * branch_offset)
+                    // TBB/TBH are relative to PC (table_start)
+                    table_start.wrapping_add(2 * branch_offset)
                 }
+            })
+            .filter(|t| {
+                let va = *t & !1;
+                metadata.is_valid_va(va)
+                    && (word_size == 4
+                        || va < table_start
+                        || va >= table_start.wrapping_add(table_bytes_len as u32))
             })
             .collect::<SmallVec<[u32; 10]>>();
 
+        targets.retain(|target| self.enqueue_va(metadata, *target, mode));
+
+        if targets.is_empty() {
+            return;
+        }
+
         debug!("jump table at {table_inst_va:#x}: {:#x?}", targets);
         metadata.branch.mark_as_table(table_inst_va, &targets);
-        targets
-            .into_iter()
-            .for_each(|target| self.enqueue_va(metadata, target, mode));
     }
 
     /// map branch immediate value to VA
@@ -643,7 +865,7 @@ impl AsmAnalysis {
             Operand::Reg(_) => return None,
             _ => unreachable!(),
         };
-        Some(code.pc().wrapping_add_signed(target as i32))
+        Some(code.pc().wrapping_add_signed(target))
     }
 
     /// check if VA is aligned
