@@ -29,9 +29,9 @@ if let Some(...) = ... {
 - no allocs unless it greatly speeds up lookup (i.e. reverse HashMap is fine)
 - no `dyn`. use generics or enum dispatch
 - no `#[derive(Copy)]` unless the type is <= 16 (ideally 8) bytes
-- no `RwLock`, `RefCell`, `(A)Rc`, etc. keep it simple
+- no `RwLock`, `RefCell`, `(A)Rc`, etc
 - no fancy `.map_or`, `.map_or_else`, etc. it's really hard to read them
-- no `unsafe`
+- no `unsafe` unless rust is being annoying
 - avoid `.clone()` on big types
 - use `unreachable!(...)` if the branch is not expected to be executed
 - prefer `.expect(...)` over `.unwrap()` for meaningful panic messages
@@ -41,8 +41,6 @@ to guess where the analyzer failed otherwise
 - errors propagated with `Err` should NOT be logged
 - logs ideally shouldn't alloc
 - document public functions
-- comments as well as docs are *lowercase*
-- comment each `.clone()`, even if it's something cheap like 16 byte struct
 - do *not* expose unneeded structs to the user. everything should be handed with views or
 global analyzer struct
 - if the struct is internal, use `pub` instead of getter/setter for the fields
