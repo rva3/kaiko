@@ -70,6 +70,7 @@ impl RegWriteTracker {
         self.regs[reg as usize] = Value::Immediate(value);
     }
 
+    #[allow(dead_code)]
     pub fn register_offset(&mut self, reg: u8, r: Reg, offset: i32) {
         self.regs[reg as usize] = Value::RegisterOffset { r, offset }
     }
@@ -82,6 +83,8 @@ impl RegWriteTracker {
         for i in 0..=3 {
             self.regs[i] = Value::Unknown;
         }
+        self.regs[12] = Value::Unknown;
+        self.regs[14] = Value::Unknown;
     }
 
     pub fn get(&self, reg: u8) -> Value {
@@ -111,13 +114,7 @@ impl RegWriteTracker {
         visited[r] = true;
 
         let result = match self.get(reg.number()) {
-            Value::Uninitialized | Value::Unknown => {
-                if reg.is_pc() {
-                    unreachable!("PC should be known");
-                } else {
-                    None
-                }
-            }
+            Value::Uninitialized | Value::Unknown => None,
             Value::Immediate(imm) => Some(imm),
             Value::RegisterOffset { r, offset } => self
                 .try_get_imm_recursive(r, base_address, data, visited)
@@ -174,12 +171,25 @@ impl RegWriteTracker {
                 }
             }
             Opcode::MOVT => {
-                if let Operand::Reg(r) = code.instruction.operands[0]
-                    && let Operand::Imm32(imm) = code.instruction.operands[1]
-                    && let Value::Immediate(existing) = self.get(r.number())
-                {
-                    trace!("MOVT: {imm:#x} to {}", r.number());
-                    self.immediate(r.number(), existing | (imm << 16));
+                if let Operand::Reg(r) = code.instruction.operands[0] {
+                    if let Operand::Imm32(imm) = code.instruction.operands[1]
+                        && let Value::Immediate(existing) = self.get(r.number())
+                    {
+                        trace!("MOVT: {imm:#x} to {}", r.number());
+                        self.immediate(r.number(), (existing & 0xffff) | (imm << 16));
+                    } else {
+                        self.regs[r.number() as usize] = Value::Unknown;
+                    }
+                }
+            }
+            Opcode::ADR => {
+                if let Operand::Reg(r) = code.instruction.operands[0] {
+                    if let Operand::Imm32(imm) = code.instruction.operands[1] {
+                        let align_pc = code.pc() & !3;
+                        self.immediate(r.number(), align_pc.wrapping_add(imm));
+                    } else {
+                        self.regs[r.number() as usize] = Value::Unknown;
+                    }
                 }
             }
             Opcode::BL | Opcode::BLX => {
@@ -195,7 +205,7 @@ impl RegWriteTracker {
 
                     match code.instruction.operands[1] {
                         // LDR Rt, [Rn, #imm]
-                        Operand::RegDerefPreindexOffset(reg, imm, up, _) => {
+                        Operand::RegDerefPreindexOffset(reg, imm, up, wback) => {
                             let offset = if up { imm as i32 } else { -(imm as i32) };
 
                             if reg.is_pc() {
@@ -207,10 +217,9 @@ impl RegWriteTracker {
                                     "LDR: literal load at {code} for {bin_offset:#x} to {}",
                                     rt.number()
                                 );
-                                if let Some(val) = a32_ldr_data(
-                                    &data[bin_offset as usize..],
-                                    code.instruction.opcode,
-                                ) {
+                                if let Some(slice) = data.get(bin_offset as usize..)
+                                    && let Some(val) = a32_ldr_data(slice, code.instruction.opcode)
+                                {
                                     resolved_val = Some(val);
                                 }
                             } else {
@@ -229,10 +238,14 @@ impl RegWriteTracker {
                                 if resolved_val.is_none() && rt != reg {
                                     fallback_deref = Some((reg, offset));
                                 }
+
+                                if wback && reg != rt {
+                                    self.regs[reg.number() as usize] = Value::Unknown;
+                                }
                             }
                         }
                         // LDR Rt, [Rn, Rm]
-                        Operand::RegDerefPreindexReg(reg, rm, up, _) => {
+                        Operand::RegDerefPreindexReg(reg, rm, up, wback) => {
                             if let (Some(base_imm), Some(index_imm)) = (
                                 self.try_get_imm(reg, base_address, data),
                                 self.try_get_imm(rm, base_address, data),
@@ -263,6 +276,17 @@ impl RegWriteTracker {
                                     fallback_deref = Some((reg, offset));
                                 }
                             }
+
+                            if wback && reg != rt {
+                                self.regs[reg.number() as usize] = Value::Unknown;
+                            }
+                        }
+                        Operand::RegDerefPostindexOffset(reg, _, _, _)
+                        | Operand::RegDerefPostindexReg(reg, _, _, _)
+                        | Operand::RegDerefPostindexRegShift(reg, _, _, _) => {
+                            if reg != rt && !reg.is_pc() {
+                                self.regs[reg.number() as usize] = Value::Unknown;
+                            }
                         }
                         _ => {}
                     }
@@ -286,7 +310,10 @@ impl RegWriteTracker {
                         // ADD Rd, Rn, #imm
                         Operand::Imm32(imm) => {
                             let offset = if is_add { imm as i32 } else { -(imm as i32) };
-                            if let Value::Immediate(v_rn) = self.get(rn.number()) {
+                            if rn.is_pc() {
+                                let align_pc = code.pc() & !3;
+                                Value::Immediate(align_pc.wrapping_add_signed(offset))
+                            } else if let Value::Immediate(v_rn) = self.get(rn.number()) {
                                 Value::Immediate(v_rn.wrapping_add_signed(offset))
                             } else {
                                 Value::Unknown
@@ -326,10 +353,94 @@ impl RegWriteTracker {
                     };
 
                     self.regs[rd.number() as usize] = new_value;
-                } else {
-                    if let Operand::Reg(rd) = code.instruction.operands[0] {
-                        self.regs[rd.number() as usize] = Value::Unknown;
+                } else if let Operand::Reg(rd) = code.instruction.operands[0] {
+                    self.regs[rd.number() as usize] = Value::Unknown;
+                }
+            }
+            Opcode::POP => {
+                match code.instruction.operands[0] {
+                    Operand::RegList(list) => {
+                        for i in 0..16 {
+                            if (list & (1 << i)) != 0 {
+                                self.regs[i] = Value::Unknown;
+                            }
+                        }
                     }
+                    Operand::Reg(r) => {
+                        self.regs[r.number() as usize] = Value::Unknown;
+                    }
+                    _ => (),
+                }
+            }
+            Opcode::LDM(..) => {
+                if let Operand::RegWBack(rn, wback) = code.instruction.operands[0]
+                    && wback
+                {
+                    self.regs[rn.number() as usize] = Value::Unknown;
+                }
+                if let Operand::RegList(list) = code.instruction.operands[1] {
+                    for i in 0..16 {
+                        if (list & (1 << i)) != 0 {
+                            self.regs[i] = Value::Unknown;
+                        }
+                    }
+                }
+            }
+            Opcode::LDRB
+            | Opcode::LDRH
+            | Opcode::LDRSB
+            | Opcode::LDRSH
+            | Opcode::LDRT
+            | Opcode::LDRBT
+            | Opcode::LDRHT
+            | Opcode::LDRSBT
+            | Opcode::LDRSHT
+            | Opcode::LDREX
+            | Opcode::LDREXB
+            | Opcode::LDREXH => {
+                if let Operand::Reg(rt) = code.instruction.operands[0] {
+                    self.regs[rt.number() as usize] = Value::Unknown;
+                }
+            }
+            Opcode::LDRD | Opcode::LDREXD => {
+                if let Operand::Reg(rt) = code.instruction.operands[0] {
+                    self.regs[rt.number() as usize] = Value::Unknown;
+                }
+                if let Operand::Reg(rt2) = code.instruction.operands[1] {
+                    self.regs[rt2.number() as usize] = Value::Unknown;
+                }
+            }
+            Opcode::AND
+            | Opcode::EOR
+            | Opcode::RSB
+            | Opcode::ADC
+            | Opcode::SBC
+            | Opcode::RSC
+            | Opcode::ORR
+            | Opcode::BIC
+            | Opcode::MVN
+            | Opcode::LSL
+            | Opcode::LSR
+            | Opcode::ASR
+            | Opcode::ROR
+            | Opcode::RRX
+            | Opcode::MUL
+            | Opcode::MLA
+            | Opcode::MLS
+            | Opcode::CLZ
+            | Opcode::UXTB
+            | Opcode::UXTH
+            | Opcode::SXTB
+            | Opcode::SXTH
+            | Opcode::BFI
+            | Opcode::BFC
+            | Opcode::UBFX
+            | Opcode::SBFX
+            | Opcode::REV
+            | Opcode::REV16
+            | Opcode::REVSH => {
+                if let Operand::Reg(rd) = code.instruction.operands[0] {
+                    self.regs[rd.number() as usize] = Value::Unknown;
                 }
             }
             _ => (),
