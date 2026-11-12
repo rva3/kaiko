@@ -173,6 +173,8 @@ impl AsmAnalysis {
         loop {
             if va != start_va && metadata.bin.contains_key(&va) {
                 debug!("{va:#x} already processed");
+                self.ensure_split(metadata, va);
+                metadata.branch.mark_as_direct_jump(last_va, va);
                 break;
             }
 
